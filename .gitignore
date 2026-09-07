@@ -1,6 +1,7 @@
 # Rust and Tauri build output
 /target/
 /release-assets/
+/apps/tauri-app/src-tauri/binaries/
 /apps/tauri-app/src-tauri/resources/meet-bridge-native-broker
 /apps/tauri-app/src-tauri/resources/meet-bridge-native-broker.exe
 
