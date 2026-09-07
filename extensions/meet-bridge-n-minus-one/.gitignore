@@ -1,0 +1,13 @@
+.DS_Store
+.env
+.env.*
+*.log
+*.pem
+*.key
+*.p12
+*.pfx
+*.zip
+dist/
+node_modules/
+meet-bridge-diagnostic-*.json
+codex-clipboard-*

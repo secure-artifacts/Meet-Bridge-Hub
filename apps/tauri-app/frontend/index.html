@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Meet Bridge Hub</title>
+    <style>
+      body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 0; background: #10141b; color: #f5f7fb; }
+      main { max-width: 680px; margin: 0 auto; padding: 32px; }
+      h1 { margin: 0 0 8px; font-size: 26px; }
+      p { color: #b8c0ce; }
+      .card { background: #1a202b; border: 1px solid #2b3546; border-radius: 12px; padding: 20px; margin-top: 20px; }
+      .status { color: #77d7a8; font-weight: 650; }
+      button { margin-top: 14px; border: 0; border-radius: 8px; padding: 10px 14px; font-weight: 650; cursor: pointer; }
+      button.danger { background: #d94b57; color: #fff; }
+      code { color: #b8c9ff; }
+      .pairing-code { display: inline-flex; align-items: center; gap: 10px; margin-top: 8px; padding: 8px 10px; border-radius: 8px; background: #10141b; }
+      .pairing-code code { font: 700 22px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .12em; }
+      .pairing-code button { margin: 0; padding: 7px 10px; background: #5267ed; color: #fff; }
+      .small { font-size: 13px; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Meet Bridge Hub</h1>
+      <p class="status" id="state">正在检查本机 Hub…</p>
+      <section class="card">
+        <strong>运行状态</strong>
+        <p id="address">未连接</p>
+        <p id="sessions">已授权端点：0</p>
+        <p id="audio-connections">已认证音频连接：0</p>
+        <p id="audio-frames">接收音频帧：0；拒绝：0</p>
+        <details><summary>诊断</summary><p id="diagnostic-path" class="small"></p></details>
+      </section>
+      <section class="card">
+        <strong>Chrome 扩展连接</strong>
+        <p id="native-host">正在检查 Native Host…</p>
+        <button id="native-host-install">安装 Chrome 连接器</button>
+        <p id="microphone">物理麦克风：未启动</p>
+        <button id="microphone-toggle">启动 Hub 麦克风</button>
+        <p id="pairing">没有待确认的 Profile。</p>
+        <p id="pairing-copy-status" class="small"></p>
+      </section>
+      <button class="danger" id="stop">停止全部桥接</button>
+    </main>
+    <script>
+      const invoke = window.__TAURI__?.core?.invoke;
+      let lastCopiedPairingCode = '';
+      async function refresh() {
+        if (!invoke) {
+          document.querySelector('#state').textContent = '桌面连接未就绪：请关闭并重新打开 Meet Bridge Hub。';
+          document.querySelectorAll('button').forEach((button) => { button.disabled = true; });
+          return;
+        }
+        const status = await invoke('hub_status');
+        document.querySelector('#state').textContent = 'Hub 正在本机运行';
+        document.querySelector('#address').innerHTML = '仅回环地址：<code>' + status.bind_addr + '</code>';
+        document.querySelector('#sessions').textContent = '已授权端点：' + status.active_sessions;
+        document.querySelector('#audio-connections').textContent = '已认证音频连接：' + status.authenticated_audio_connections;
+        document.querySelector('#audio-frames').textContent = `接收音频帧：${status.accepted_audio_frames}；拒绝：${status.rejected_audio_frames}`;
+        document.querySelector('#diagnostic-path').textContent = '日志：' + status.diagnostic_log_path;
+        document.querySelector('#microphone').textContent = '物理麦克风：' + (status.microphone_active ? '已由 Hub 独占使用' : '未启动');
+        document.querySelector('#microphone-toggle').textContent = status.microphone_active ? '停止 Hub 麦克风' : '启动 Hub 麦克风';
+        const nativeHostReady = await invoke('native_host_registered');
+        document.querySelector('#native-host').textContent = nativeHostReady
+          ? 'Chrome 连接器已就绪（仅允许本扩展连接）'
+          : '尚未安装 Chrome 连接器。';
+        document.querySelector('#native-host-install').textContent = nativeHostReady ? '重新安装 Chrome 连接器' : '安装 Chrome 连接器';
+        renderPairing(status);
+      }
+      async function copyPairingCode(code) {
+        try {
+          await navigator.clipboard.writeText(code);
+        } catch {
+          const fallback = document.createElement('textarea');
+          fallback.value = code;
+          fallback.style.position = 'fixed';
+          fallback.style.opacity = '0';
+          document.body.append(fallback);
+          fallback.select();
+          document.execCommand('copy');
+          fallback.remove();
+        }
+        lastCopiedPairingCode = code;
+        document.querySelector('#pairing-copy-status').textContent = `已复制确认码 ${code}`;
+      }
+      function renderPairing(status) {
+        const pairing = document.querySelector('#pairing');
+        const copyStatus = document.querySelector('#pairing-copy-status');
+        pairing.replaceChildren();
+        if (status.pending_pair_codes.length) {
+          if (!status.pending_pair_codes.includes(lastCopiedPairingCode)) {
+            lastCopiedPairingCode = '';
+            copyStatus.textContent = '';
+          }
+          const prompt = document.createElement('span');
+          prompt.textContent = '将下面的六码确认码输入对应 Chrome Profile 的扩展：';
+          pairing.append(prompt);
+          for (const code of status.pending_pair_codes) {
+            const box = document.createElement('span');
+            box.className = 'pairing-code';
+            const codeElement = document.createElement('code');
+            codeElement.textContent = code;
+            const copy = document.createElement('button');
+            copy.type = 'button';
+            copy.textContent = '复制代码';
+            copy.addEventListener('click', () => copyPairingCode(code));
+            box.append(codeElement, copy);
+            pairing.append(box);
+          }
+          return;
+        }
+        copyStatus.textContent = '';
+        const pairedProfiles = Number(status.paired_profiles || 0);
+        pairing.textContent = pairedProfiles
+          ? `已配对匿名 Profile：${pairedProfiles} 个。现在可在扩展中将会议页面加入频道。`
+          : '没有待确认或已配对的 Profile。';
+      }
+      document.querySelector('#stop').addEventListener('click', async () => { if (invoke) await invoke('stop_all_bridging'); await refresh(); });
+      document.querySelector('#microphone-toggle').addEventListener('click', async () => {
+        if (!invoke) return;
+        const status = await invoke('hub_status');
+        try { await invoke(status.microphone_active ? 'stop_microphone' : 'start_microphone'); }
+        catch (error) { document.querySelector('#state').textContent = '麦克风未启动：' + String(error); }
+        await refresh();
+      });
+      document.querySelector('#native-host-install').addEventListener('click', async () => {
+        if (!invoke) return;
+        try {
+          await invoke('install_native_host');
+          document.querySelector('#state').textContent = 'Chrome 连接器已安装';
+        } catch (error) {
+          document.querySelector('#state').textContent = 'Chrome 连接器未安装：' + String(error);
+        }
+        await refresh();
+      });
+      refresh();
+      setInterval(refresh, 1000);
+    </script>
+  </body>
+</html>

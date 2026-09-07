@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>NSMicrophoneUsageDescription</key>
+  <string>Meet Bridge Hub 仅在您点击“启动 Hub 麦克风”后使用物理麦克风，将音频保留在本机用于会议桥接。</string>
+</dict>
+</plist>

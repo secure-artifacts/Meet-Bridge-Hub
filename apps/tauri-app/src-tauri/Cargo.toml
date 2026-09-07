@@ -1,0 +1,30 @@
+[package]
+name = "meet-bridge-hub-ui"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[features]
+default = []
+updates = ["dep:tauri-plugin-updater"]
+
+[build-dependencies]
+tauri-build.workspace = true
+
+[dependencies]
+hub-core = { package = "meet-bridge-hub-core", path = "../../../crates/hub-core" }
+shared-proto.workspace = true
+
+tauri.workspace = true
+tauri-plugin-updater = { workspace = true, optional = true }
+
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[lints]
+workspace = true

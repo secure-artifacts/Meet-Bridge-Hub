@@ -1,0 +1,10 @@
+{
+  "name": "meet-bridge-n-minus-one",
+  "version": "0.0.2",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node scripts/validate-extension.mjs && node --check background.js && node --check content-bridge.js && node --check hub-link.js && node --check main-world.js && node --check mic.js && node --check offscreen.js && node --check pcm-output-worklet.js && node --check pcm-page-output-worklet.js && node --check popup.js",
+    "build": "npm test && node scripts/prepare-release.mjs"
+  }
+}

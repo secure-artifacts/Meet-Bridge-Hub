@@ -1,0 +1,101 @@
+{
+  "manifest_version": 3,
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA3pQT4BaAG2epnu8us7ktS882LP9xoi+0t5fCEdI8oVX8Qwqy5qiv4RXd6qwOjYfM5ESUgDg458Yi3niz8yO2w2qxah1jj+RwS4rxFHPWZrOhEog+xMZDtX38lNkCHHt8XdOEcFqY9gicG5e6ryQe00roYowx2aTu8zodkmR73/m+c5oNm4V8k31cIrrQJs6cbBr8eqSsl2Hgu7pl1GKvFLF2N63lxNQ/yP4I0gdcsUBYy1yGoW1TrTJuoAcQHoYihL76Zl4XgnBGCfWvqXxWJsWuL2kKs5KU0KolDPS+d715pHfHm8FPtp6++/nHg33FKG/W7xrZUPfr/HGwMgW+YQIDAQAB",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA3pQT4BaAG2epnu8us7ktS882LP9xoi+0t5fCEdI8oVX8Qwqy5qiv4RXd6qwOjYfM5ESUgDg458Yi3niz8yO2w2qxah1jj+RwS4rxFHPWZrOhEog+xMZDtX38lNkCHHt8XdOEcFqY9gicG5e6ryQe00roYowx2aTu8zodkmR73/m+c5oNm4V8k31cIrrQJs6cbBr8eqSsl2Hgu7pl1GKvFLF2N63lxNQ/yP4I0gdcsUBYy1yGoW1TrTJuoAcQHoYihL76Zl4XgnBGCfWvqXxWJsWuL2kKs5KU0KolDPS+d715pHfHm8FPtp6++/nHg33FKG/W7xrZUPfr/HGwMgW+YQIDAQAB",
+  "name": "Meet Bridge N-1",
+  "version": "0.0.2",
+  "description": "Bridge audio between browser meeting tabs with per-tab N-1 mix-minus routing.",
+  "minimum_chrome_version": "116",
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'; connect-src 'self' ws://127.0.0.1:39201"
+  },
+  "permissions": [
+    "activeTab",
+    "offscreen",
+    "nativeMessaging",
+    "scripting",
+    "storage",
+    "tabCapture",
+    "tabs",
+    "windows"
+  ],
+  "host_permissions": [
+    "https://*.facebook.com/*",
+    "https://*.messenger.com/*",
+    "https://*.instagram.com/*",
+    "https://*.teams.microsoft.com/*",
+    "https://*.teams.cloud.microsoft/*",
+    "https://teams.live.com/*",
+    "https://meet.google.com/*",
+    "https://meet.jit.si/*"
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["pcm-page-output-worklet.js"],
+      "matches": ["<all_urls>"]
+    }
+  ],
+  "optional_host_permissions": [
+    "https://*/*",
+    "http://*/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "Meet Bridge N-1",
+    "default_popup": "popup.html"
+  },
+  "commands": {
+    "capture-active-meeting": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+M",
+        "mac": "Command+Shift+M"
+      },
+      "description": "Capture and join the active Meet Bridge meeting tab"
+    },
+    "toggle-self-mute": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+U",
+        "mac": "Command+Shift+U"
+      },
+      "description": "Mute or unmute only the bridge operator microphone"
+    }
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://*.facebook.com/*",
+        "https://*.messenger.com/*",
+        "https://*.instagram.com/*",
+        "https://*.teams.microsoft.com/*",
+        "https://*.teams.cloud.microsoft/*",
+        "https://teams.live.com/*",
+        "https://meet.google.com/*",
+        "https://meet.jit.si/*"
+      ],
+      "js": ["content-bridge.js"],
+      "all_frames": true,
+      "match_origin_as_fallback": true,
+      "run_at": "document_start",
+      "world": "ISOLATED"
+    },
+    {
+      "matches": [
+        "https://*.facebook.com/*",
+        "https://*.messenger.com/*",
+        "https://*.instagram.com/*",
+        "https://*.teams.microsoft.com/*",
+        "https://*.teams.cloud.microsoft/*",
+        "https://teams.live.com/*",
+        "https://meet.google.com/*",
+        "https://meet.jit.si/*"
+      ],
+      "js": ["main-world.js"],
+      "all_frames": true,
+      "match_origin_as_fallback": true,
+      "run_at": "document_start",
+      "world": "MAIN"
+    }
+  ]
+}

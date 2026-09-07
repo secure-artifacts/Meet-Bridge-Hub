@@ -1,0 +1,16 @@
+# Rust and Tauri build output
+/target/
+/release-assets/
+/apps/tauri-app/src-tauri/resources/meet-bridge-native-broker
+/apps/tauri-app/src-tauri/resources/meet-bridge-native-broker.exe
+
+# Local configuration and operating-system files
+.env
+.env.*
+!.env.example
+.DS_Store
+Thumbs.db
+
+# JavaScript dependencies (the extension has no committed dependencies)
+node_modules/
+extensions/**/node_modules/

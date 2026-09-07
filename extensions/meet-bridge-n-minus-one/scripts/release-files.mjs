@@ -1,0 +1,16 @@
+export const releaseFiles = [
+  "background.js",
+  "content-bridge.js",
+  "hub-link.js",
+  "main-world.js",
+  "manifest.json",
+  "mic.html",
+  "mic.js",
+  "offscreen.html",
+  "offscreen.js",
+  "pcm-output-worklet.js",
+  "pcm-page-output-worklet.js",
+  "popup.css",
+  "popup.html",
+  "popup.js",
+];

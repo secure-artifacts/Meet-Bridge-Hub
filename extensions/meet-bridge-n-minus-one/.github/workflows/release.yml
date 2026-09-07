@@ -1,0 +1,60 @@
+name: Release Browser Extension
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: write
+      attestations: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Validate tag and prepare extension
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: npm run build
+
+      - name: Create final ZIP exactly once
+        id: package
+        shell: bash
+        run: |
+          set -euo pipefail
+          asset="Meet-Bridge-N-1-${GITHUB_REF_NAME}.zip"
+          path="dist/${asset}"
+          cd dist/extension
+          find . -type f -print | LC_ALL=C sort | zip -X -q "../${asset}" -@
+          cd ../..
+          test -s "${path}"
+          unzip -Z1 "${path}" > /tmp/meet-bridge-release-files.txt
+          test "$(head -n 1 /tmp/meet-bridge-release-files.txt)" != "extension/"
+          grep -Fxq "manifest.json" /tmp/meet-bridge-release-files.txt
+          echo "asset_path=${path}" >> "$GITHUB_OUTPUT"
+
+      - name: Attest the final Release asset
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: ${{ steps.package.outputs.asset_path }}
+
+      - name: Verify provenance before upload
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ASSET_PATH: ${{ steps.package.outputs.asset_path }}
+        run: gh attestation verify "$ASSET_PATH" --repo "$GITHUB_REPOSITORY"
+
+      - name: Upload the same attested asset
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ steps.package.outputs.asset_path }}
+          generate_release_notes: true

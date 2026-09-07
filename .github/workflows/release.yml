@@ -1,0 +1,95 @@
+name: Build and release Meet Bridge Hub
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+# These permissions are required by GitHub's build-provenance attestation and
+# by the GitHub Actions bot when it creates the Release.
+permissions:
+  id-token: write
+  contents: write
+  attestations: write
+
+jobs:
+  macos:
+    name: macOS package, attest, and release
+    # macos-14 is GitHub's Apple Silicon (ARM64) standard runner.
+    runs-on: macos-14
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify Apple Silicon runner
+        shell: bash
+        run: |
+          test "$(uname -m)" = "arm64"
+          rustc -vV
+
+      - name: Install Tauri CLI
+        run: cargo install tauri-cli --locked --version '^2'
+
+      - name: Build macOS DMG
+        run: cargo tauri build --bundles dmg
+
+      - name: Stage final macOS asset
+        shell: bash
+        run: |
+          mkdir -p release-assets
+          dmg=$(find target/release/bundle/dmg -maxdepth 1 -name '*.dmg' -print -quit)
+          test -n "$dmg"
+          cp "$dmg" release-assets/
+
+      # The exact DMG uploaded below is the subject of this attestation.
+      - name: Attest macOS release asset
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: 'release-assets/*.dmg'
+
+      - name: Create Release and upload macOS asset
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release-assets/*.dmg
+          generate_release_notes: true
+
+  windows:
+    name: Windows packages, attest, and release
+    needs: macos
+    # Pin the supported x64 Windows image instead of inheriting image changes.
+    runs-on: windows-2022
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify Windows x64 runner
+        shell: pwsh
+        run: |
+          if ($env:PROCESSOR_ARCHITECTURE -ne 'AMD64') { throw 'Windows x64 runner is required.' }
+          rustc -vV
+
+      - name: Install Tauri CLI
+        run: cargo install tauri-cli --locked --version '^2'
+
+      - name: Build Windows installers
+        run: cargo tauri build --bundles msi,nsis
+
+      - name: Stage final Windows assets
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force release-assets | Out-Null
+          $assets = Get-ChildItem target/release/bundle -Recurse -File -Include *.msi,*.exe
+          if ($assets.Count -eq 0) { throw 'No Windows installer was produced.' }
+          $assets | Copy-Item -Destination release-assets
+
+      # These are the exact MSI/NSIS files uploaded by the next step.
+      - name: Attest Windows release assets
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: 'release-assets/*'
+
+      - name: Upload Windows assets to the existing Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release-assets/*
+          generate_release_notes: true

@@ -1,0 +1,9 @@
+{
+  "name": "com.meetbridge.hub",
+  "description": "Meet Bridge Hub native broker",
+  "path": "__NATIVE_BROKER_ABSOLUTE_PATH__",
+  "type": "stdio",
+  "allowed_origins": [
+    "chrome-extension://ancoaojdjchmllenalcmmkgndahancgp/"
+  ]
+}

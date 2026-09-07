@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Meet Bridge 麦克风选择</title>
+    <style>
+      :root { font-family: system-ui, sans-serif; color: #172033; background: #f5f7fb; }
+      body { margin: 0; min-height: 100vh; display: grid; place-items: center; }
+      main { width: min(520px, calc(100vw - 40px)); padding: 28px; border: 1px solid #e1e6f0; border-radius: 18px; background: white; box-shadow: 0 16px 50px #26365b14; }
+      h1 { margin: 0 0 10px; font-size: 24px; }
+      p { color: #626c80; line-height: 1.65; }
+      .controls { display: grid; gap: 12px; margin-top: 18px; }
+      select, button { min-height: 44px; border-radius: 10px; padding: 0 14px; font: inherit; }
+      select { width: 100%; border: 1px solid #d8deea; background: white; color: #172033; }
+      button { border: 0; background: #5267ed; color: white; font-weight: 700; cursor: pointer; }
+      button.secondary { background: #e8ecff; color: #3548c6; }
+      button:disabled, select:disabled { opacity: .5; cursor: not-allowed; }
+      #status { margin-top: 16px; border-radius: 10px; padding: 12px; background: #edf1f8; }
+      #status.ok { background: #ddf7e8; color: #18794e; }
+      #status.error { background: #ffe3e3; color: #b42318; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>选择桥接麦克风</h1>
+      <p>
+        此处选择供 Google Meet、Teams 等共享模式使用的麦克风。Jitsi 使用其网页自己的麦克风菜单；插件只在后台复用该真实输入并加入最终混音。
+      </p>
+      <div class="controls">
+        <button id="authorize" class="secondary">授权并刷新设备列表</button>
+        <select id="deviceSelect" disabled>
+          <option value="">系统默认麦克风</option>
+        </select>
+        <button id="apply" disabled>使用所选麦克风</button>
+      </div>
+      <div id="status">尚未检查</div>
+    </main>
+    <script src="mic.js"></script>
+  </body>
+</html>

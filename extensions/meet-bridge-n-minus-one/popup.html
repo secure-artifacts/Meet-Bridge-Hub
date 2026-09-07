@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Meet Bridge N-1</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <main>
+      <header>
+        <div>
+          <h1>Meet Bridge</h1>
+          <p>N-1 mix-minus</p>
+        </div>
+        <span id="engineState" class="pill idle">未运行</span>
+      </header>
+
+      <section class="card channel-card">
+        <div class="section-heading">
+          <h2>音频频道</h2>
+          <span id="channelRouteSummary" class="count">0 路</span>
+        </div>
+        <div class="channel-tabs" role="tablist" aria-label="选择音频频道">
+          <button class="channel-tab active" data-channel-id="1" role="tab">
+            <span class="channel-index">1</span>
+            <span class="channel-tab-copy">
+              <strong id="channelTabName1">频道 1</strong>
+              <small id="channelTabCount1">0 路</small>
+            </span>
+          </button>
+          <button class="channel-tab" data-channel-id="2" role="tab">
+            <span class="channel-index">2</span>
+            <span class="channel-tab-copy">
+              <strong id="channelTabName2">频道 2</strong>
+              <small id="channelTabCount2">0 路</small>
+            </span>
+          </button>
+          <button class="channel-tab" data-channel-id="3" role="tab">
+            <span class="channel-index">3</span>
+            <span class="channel-tab-copy">
+              <strong id="channelTabName3">频道 3</strong>
+              <small id="channelTabCount3">0 路</small>
+            </span>
+          </button>
+        </div>
+        <div class="channel-toolbar">
+          <input id="channelName" maxlength="18" aria-label="当前频道名称" />
+          <button id="renameChannel" class="quiet">改名</button>
+        </div>
+        <div class="channel-control-row">
+          <div>
+            <p id="channelVoiceState" class="channel-voice-state">本频道可以听见你</p>
+            <p id="channelHint" class="muted small">频道间数字音频完全隔离。</p>
+          </div>
+        </div>
+        <div class="channel-audio-actions">
+          <button id="toggleChannelMute" class="talk-stop">本频道静音</button>
+          <button id="toggleChannelMonitor" class="monitor-on">本地监听中</button>
+        </div>
+        <button id="stopChannel" class="channel-stop" disabled>停止当前频道</button>
+      </section>
+
+      <section class="card talk-card">
+        <div class="control-heading">
+          <div>
+            <h2>本人声音总开关</h2>
+            <p id="selfVoiceState" class="control-state">全部频道可以发言</p>
+          </div>
+          <button id="toggleSelfMute" class="talk-stop">全部频道静音</button>
+        </div>
+        <p id="selfVoiceHint" class="muted small">
+          只控制你的物理麦克风，不会停止会议之间的转发。
+        </p>
+      </section>
+
+      <section class="card compact hub-card">
+        <div class="section-heading">
+          <h2>跨 Profile Hub（实验功能）</h2>
+          <span id="hubState" class="count">关闭</span>
+        </div>
+        <p class="muted small">
+          仅在安装并启动 Meet Bridge Hub 后启用。关闭时保持原有单 Profile N-1 路径不变。
+        </p>
+        <button id="toggleHub" class="secondary">启用跨 Profile Hub</button>
+        <div id="hubPairingForm" class="hub-pairing" hidden>
+          <label for="hubPairingCode">输入 Hub 显示的六码确认码</label>
+          <div class="hub-pairing-controls">
+            <input id="hubPairingCode" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" placeholder="六码确认码" aria-describedby="hubPairingHint" />
+            <button id="confirmHubPairing" class="secondary">确认配对</button>
+          </div>
+          <p id="hubPairingHint" class="muted small">仅当输入与 Hub 显示的代码一致时才会提交。</p>
+        </div>
+      </section>
+
+      <section class="card current-card">
+        <h2>当前标签页</h2>
+        <p id="currentTitle" class="tab-title">正在读取…</p>
+        <p id="currentHint" class="muted"></p>
+        <button id="addCurrent" class="primary" disabled>
+          加入当前页并刷新
+        </button>
+        <div id="customActions" class="custom-actions" hidden>
+          <p class="muted small">将当前网站设置为：</p>
+          <div class="custom-action-buttons">
+            <button class="mini" data-custom-role="meeting">会议收发端</button>
+            <button class="mini" data-custom-role="source">音频源</button>
+            <button class="mini" data-custom-role="receiver">识别接收端</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="section-heading">
+          <h2 id="routeHeading">当前频道的标签页</h2>
+          <span id="routeCount" class="count">0</span>
+        </div>
+        <div id="routeList" class="list empty">尚未加入会议</div>
+      </section>
+
+      <section class="card compact">
+        <div class="section-heading">
+          <h2>其他可加入标签页</h2>
+        </div>
+        <p class="muted small">先切换上方频道；新加入的页面会进入当前高亮频道。</p>
+        <div id="eligibleList" class="list empty">没有其他支持的标签页</div>
+      </section>
+
+      <section class="card preset-card">
+        <div class="section-heading">
+          <h2>三频道常用组合</h2>
+          <span id="presetProgress" class="count">未保存</span>
+        </div>
+        <p id="presetHint" class="muted small">配置三个频道后保存，下次按提示快速恢复。</p>
+        <button id="presetNext" class="preset-next" hidden>继续加入下一页</button>
+        <div class="preset-actions">
+          <button id="savePreset" class="secondary">保存当前组合</button>
+          <button id="clearPreset" class="quiet" hidden>清除</button>
+        </div>
+      </section>
+
+      <section id="shortcutCard" class="card shortcut-card" hidden>
+        <div>
+          <h2>Messenger 呼叫窗口授权</h2>
+          <p id="shortcutHint" class="muted"></p>
+        </div>
+        <button id="shortcutSettings" class="secondary">设置快捷键</button>
+      </section>
+
+      <p id="bridgeSafety" class="safety-note" hidden>
+        同一组互通会议只应有一台电脑开启主动桥接，避免跨电脑回流。
+      </p>
+
+      <section class="card compact privacy-card">
+        <div class="section-heading">
+          <h2>隐私与诊断</h2>
+          <span id="diagnosticState" class="count">关闭</span>
+        </div>
+        <p id="diagnosticHint" class="muted small">
+          默认不记录。需要排查时可临时开启 10 分钟，记录只保存在内存中。
+        </p>
+        <div class="diagnostic-actions">
+          <button id="exportSettings" class="secondary">导出设置</button>
+          <button id="importSettings" class="secondary">导入设置</button>
+          <button id="toggleDiagnostics" class="secondary">开启诊断 10 分钟</button>
+          <button id="exportLog" class="secondary" disabled>下载诊断日志</button>
+          <button id="clearLocalData" class="danger">清除本地数据</button>
+        </div>
+      </section>
+
+      <input id="settingsFile" type="file" accept="application/json" hidden />
+
+      <div id="message" role="status" aria-live="polite"></div>
+
+      <footer>
+        <button id="micSetup" class="secondary">选择麦克风</button>
+        <button id="stopAll" class="danger" disabled>停止全部</button>
+      </footer>
+    </main>
+    <script src="popup.js"></script>
+  </body>
+</html>
