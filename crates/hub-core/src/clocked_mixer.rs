@@ -66,6 +66,9 @@ impl ClockedMixer {
     pub fn mix_for(&self, endpoint: MixEndpoint) -> Frame {
         self.matrix.mix_for(endpoint)
     }
+    pub fn mix_for_excluding(&self, endpoint: MixEndpoint, excluded: &[MixEndpoint]) -> Frame {
+        self.matrix.mix_for_excluding(endpoint, excluded)
+    }
 }
 
 #[cfg(test)]

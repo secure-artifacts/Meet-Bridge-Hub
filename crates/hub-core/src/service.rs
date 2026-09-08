@@ -93,12 +93,18 @@ struct Metrics {
     audio_slow_disconnects: u64,
 }
 
+struct AudioClient {
+    sender: mpsc::Sender<Vec<u8>>,
+    exclude_same_profile: bool,
+    include_hub_microphone: bool,
+}
+
 #[derive(Clone)]
 pub struct HubService {
     config: HubConfig,
     sessions: Arc<Mutex<HashMap<SessionId, SessionRecord>>>,
     mixer: Arc<Mutex<ClockedMixer>>,
-    audio_clients: Arc<Mutex<HashMap<SessionId, mpsc::Sender<Vec<u8>>>>>,
+    audio_clients: Arc<Mutex<HashMap<SessionId, AudioClient>>>,
     metrics: Arc<Mutex<Metrics>>,
     pairings: Arc<Mutex<PairingRegistry>>,
     microphone: Arc<Mutex<Option<MicrophoneCapture>>>,
@@ -293,6 +299,13 @@ impl HubService {
         }
 
         let mut sessions = self.sessions.lock();
+        if endpoint_id.is_nil()
+            || sessions
+                .values()
+                .any(|s| s.endpoint_id == endpoint_id && s.profile_id != profile_id)
+        {
+            return Err(AdmissionError::EndpointConflict);
+        }
         let replaced = sessions
             .iter()
             .filter_map(|(id, session)| {
@@ -452,7 +465,7 @@ impl HubService {
             let mut mixer = self.mixer.lock();
             let before = mixer.underruns;
             mixer.advance();
-            for (id, sender) in clients.iter() {
+            for (id, client) in clients.iter() {
                 let Some(session) = sessions.get(id) else {
                     continue;
                 };
@@ -460,8 +473,28 @@ impl HubService {
                     endpoint_id: session.endpoint_id,
                     channel_id: session.channel_id,
                 };
-                let frame = encode_downlink_frame(session, mixer.mix_for(endpoint), sequence);
-                if sender.try_send(frame).is_err() {
+                let mut excluded: Vec<_> = sessions
+                    .values()
+                    .filter(|source| {
+                        client.exclude_same_profile && source.profile_id == session.profile_id
+                    })
+                    .map(|source| MixEndpoint {
+                        endpoint_id: source.endpoint_id,
+                        channel_id: source.channel_id,
+                    })
+                    .collect();
+                if !client.include_hub_microphone {
+                    excluded.push(MixEndpoint {
+                        endpoint_id: Uuid::nil(),
+                        channel_id: session.channel_id,
+                    });
+                }
+                let samples = mixer.mix_for_excluding(endpoint, &excluded);
+                if sequence % 100 == 0 {
+                    write_audio_level("audio_downlink_mix", *id, session, sequence, &samples);
+                }
+                let frame = encode_downlink_frame(session, samples, sequence);
+                if client.sender.try_send(frame).is_err() {
                     slow.push(*id);
                 }
             }
@@ -504,14 +537,25 @@ impl HubService {
             if !sessions.contains_key(&session_id) || clients.contains_key(&session_id) {
                 return Err(ConnectionError::RejectedAuthentication);
             }
-            clients.insert(session_id, sender);
+            clients.insert(
+                session_id,
+                AudioClient {
+                    sender,
+                    exclude_same_profile: auth.exclude_same_profile,
+                    include_hub_microphone: auth.include_hub_microphone,
+                },
+            );
         }
         self.metrics.lock().authenticated_audio_connections += 1;
         write_diagnostic_event("audio_authenticated");
 
         let result = async {
         socket
-            .send(Message::Text("{\"type\":\"AUDIO_READY\"}".into()))
+            .send(Message::Text(serde_json::json!({
+                "type": "AUDIO_READY",
+                "exclude_same_profile": auth.exclude_same_profile,
+                "include_hub_microphone": auth.include_hub_microphone,
+            }).to_string().into()))
             .await
             .map_err(ConnectionError::WebSocket)?;
 
@@ -589,6 +633,9 @@ impl HubService {
                 && header.endpoint_id == *session.endpoint_id.as_bytes()
                 && header.channel_id == session.channel_id.0
                 && header.epoch == session.epoch
+                && header.protocol_version == 1
+                && header.flags & shared_proto::audio_flags::UPLINK_PROFILE_BUS != 0
+                && header.flags & shared_proto::audio_flags::DOWNLINK_REMOTE_BUS == 0
         });
         if accepted {
             let Some(samples) = decode_pcm(frame) else {
@@ -625,6 +672,17 @@ impl HubService {
             if accepted_frames == 1 || accepted_frames % 500 == 0 {
                 write_diagnostic_event("audio_frames_accepted");
             }
+            if let Some(header) = header {
+                if header.sequence % 100 == 0 {
+                    write_audio_level(
+                        "audio_uplink_pcm",
+                        session_id,
+                        session,
+                        header.sequence,
+                        &samples,
+                    );
+                }
+            }
         } else {
             self.reject_frame();
         }
@@ -644,6 +702,9 @@ impl HubService {
 }
 
 fn diagnostic_log_path() -> std::path::PathBuf {
+    if let Some(path) = std::env::var_os("MEET_BRIDGE_AUDIO_LOG") {
+        return std::path::PathBuf::from(path);
+    }
     std::env::var_os("HOME")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(std::env::temp_dir)
@@ -651,6 +712,32 @@ fn diagnostic_log_path() -> std::path::PathBuf {
 }
 
 fn write_diagnostic_event(event: &str) {
+    write_diagnostic_json(serde_json::json!({
+        "timestamp_ms": unix_millis(SystemTime::now()),
+        "event": event,
+    }));
+}
+
+fn write_audio_level(
+    event: &str,
+    session_id: SessionId,
+    session: &SessionRecord,
+    sequence: u64,
+    samples: &[f32],
+) {
+    let energy: f64 = samples.iter().map(|s| f64::from(*s).powi(2)).sum();
+    let peak = samples.iter().fold(0.0_f32, |peak, s| peak.max(s.abs()));
+    write_diagnostic_json(serde_json::json!({
+        "timestamp_ms": unix_millis(SystemTime::now()), "event": event,
+        "sessionId": session_id, "profileId": session.profile_id, "endpointId": session.endpoint_id,
+        "channelId": session.channel_id.0, "sequence": sequence, "frames": samples.len(),
+        "sampleRate": 48000, "rms": (energy / samples.len() as f64).sqrt(), "peak": peak,
+    }));
+}
+
+fn write_diagnostic_json(value: serde_json::Value) {
+    static LOG_LOCK: Mutex<()> = Mutex::new(());
+    let _guard = LOG_LOCK.lock();
     let path = diagnostic_log_path();
     let Some(parent) = path.parent() else {
         return;
@@ -661,12 +748,9 @@ fn write_diagnostic_event(event: &str) {
     let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) else {
         return;
     };
-    let _ = writeln!(
-        file,
-        r#"{{"timestamp_ms":{},"event":"{}"}}"#,
-        unix_millis(SystemTime::now()),
-        event
-    );
+    let mut line = value.to_string();
+    line.push('\n');
+    let _ = file.write_all(line.as_bytes());
 }
 
 fn unix_millis(value: SystemTime) -> u128 {
@@ -761,10 +845,16 @@ fn make_secret() -> Result<String, AdmissionError> {
 struct AudioAuth {
     session_id: String,
     session_secret_b64: String,
+    #[serde(default)]
+    exclude_same_profile: bool,
+    #[serde(default)]
+    include_hub_microphone: bool,
 }
 
 #[derive(Debug, thiserror::Error)]
 pub enum AdmissionError {
+    #[error("endpoint identity is reserved or already belongs to another profile")]
+    EndpointConflict,
     #[error("invalid channel")]
     InvalidChannel,
     #[error("session capacity reached")]

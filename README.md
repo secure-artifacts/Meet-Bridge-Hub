@@ -1,5 +1,9 @@
 # Meet Bridge Hub
 
+## 0.1.3
+
+- 修复跨 Profile N-1 路由、无上行接收端、Hub 麦克风显式接收端选择，以及断线与音频电平诊断。
+
 Meet Bridge Hub is the desktop companion for the Meet Bridge browser extension. This repository contains two deliberately separate deliverables:
 
 - `apps/`, `crates/`, and `packaging/`: the Tauri desktop application for macOS and Windows.
