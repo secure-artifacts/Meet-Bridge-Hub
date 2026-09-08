@@ -1,5 +1,4 @@
 #![cfg(unix)]
-#![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use meet_bridge_hub_core::{
     HubConfig, HubService,

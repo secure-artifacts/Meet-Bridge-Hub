@@ -17,12 +17,15 @@ use shared_proto::{
     SessionGrant, SessionId,
 };
 use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::mpsc;
+use tokio::time::{MissedTickBehavior, interval, timeout};
 use tokio_tungstenite::{accept_async, tungstenite::Message};
 use tracing::{debug, warn};
 use uuid::Uuid;
 
+use crate::clocked_mixer::ClockedMixer;
 use crate::microphone::{MicrophoneCapture, MicrophoneError};
-use crate::mixer::{MixEndpoint, NMinusOneMatrix, PCM_FRAME_SAMPLES};
+use crate::mixer::{MixEndpoint, PCM_FRAME_SAMPLES};
 use crate::pairing::PairingRegistry;
 
 const MAX_AUDIO_PAYLOAD_BYTES: usize = 1920;
@@ -55,6 +58,9 @@ pub struct HubStatus {
     pub paired_profiles: usize,
     pub microphone_active: bool,
     pub diagnostic_log_path: String,
+    pub audio_queue_underruns: u64,
+    pub audio_queue_dropped_frames: u64,
+    pub audio_slow_disconnects: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -84,13 +90,15 @@ struct Metrics {
     accepted_audio_frames: u64,
     rejected_audio_frames: u64,
     authenticated_audio_connections: u64,
+    audio_slow_disconnects: u64,
 }
 
 #[derive(Clone)]
 pub struct HubService {
     config: HubConfig,
     sessions: Arc<Mutex<HashMap<SessionId, SessionRecord>>>,
-    mixer: Arc<Mutex<NMinusOneMatrix>>,
+    mixer: Arc<Mutex<ClockedMixer>>,
+    audio_clients: Arc<Mutex<HashMap<SessionId, mpsc::Sender<Vec<u8>>>>>,
     metrics: Arc<Mutex<Metrics>>,
     pairings: Arc<Mutex<PairingRegistry>>,
     microphone: Arc<Mutex<Option<MicrophoneCapture>>>,
@@ -102,6 +110,7 @@ impl HubService {
             config,
             sessions: Arc::new(Mutex::new(HashMap::new())),
             mixer: Arc::new(Mutex::new(microphone_matrix())),
+            audio_clients: Arc::new(Mutex::new(HashMap::new())),
             metrics: Arc::new(Mutex::new(Metrics::default())),
             pairings: Arc::new(Mutex::new(PairingRegistry::default())),
             microphone: Arc::new(Mutex::new(None)),
@@ -117,7 +126,7 @@ impl HubService {
             endpoint_id: Uuid::nil(),
             channel_id,
         };
-        let _ = self.mixer.lock().set_input(endpoint, samples);
+        let _ = self.mixer.lock().enqueue(endpoint, samples);
     }
 
     pub fn start_microphone(&self) -> Result<bool, MicrophoneError> {
@@ -134,6 +143,19 @@ impl HubService {
             return false;
         };
         microphone.stop();
+        let mut mixer = self.mixer.lock();
+        for channel_id in [
+            ChannelId::CHANNEL_1,
+            ChannelId::CHANNEL_2,
+            ChannelId::CHANNEL_3,
+        ] {
+            let endpoint = MixEndpoint {
+                endpoint_id: Uuid::nil(),
+                channel_id,
+            };
+            mixer.remove(endpoint);
+            mixer.register(endpoint);
+        }
         true
     }
 
@@ -271,12 +293,28 @@ impl HubService {
         }
 
         let mut sessions = self.sessions.lock();
+        let replaced = sessions
+            .iter()
+            .filter_map(|(id, session)| {
+                (session.profile_id == profile_id && session.endpoint_id == endpoint_id)
+                    .then_some(*id)
+            })
+            .collect::<Vec<_>>();
+        let session_secret_b64 = make_secret()?;
+        for id in replaced {
+            if let Some(old) = sessions.remove(&id) {
+                self.audio_clients.lock().remove(&id);
+                self.mixer.lock().remove(MixEndpoint {
+                    endpoint_id: old.endpoint_id,
+                    channel_id: old.channel_id,
+                });
+            }
+        }
         if sessions.len() >= self.config.max_sessions {
             return Err(AdmissionError::CapacityReached);
         }
 
         let session_id = Uuid::new_v4();
-        let session_secret_b64 = make_secret()?;
         let expires_at = SystemTime::now() + SESSION_TTL;
         sessions.insert(
             session_id,
@@ -307,8 +345,10 @@ impl HubService {
     }
 
     pub fn revoke_session(&self, session_id: SessionId) -> bool {
-        let removed = self.sessions.lock().remove(&session_id);
+        let mut sessions = self.sessions.lock();
+        let removed = sessions.remove(&session_id);
         if let Some(session) = removed {
+            self.audio_clients.lock().remove(&session_id);
             self.mixer.lock().remove(MixEndpoint {
                 endpoint_id: session.endpoint_id,
                 channel_id: session.channel_id,
@@ -329,6 +369,10 @@ impl HubService {
     }
 
     pub fn status(&self) -> HubStatus {
+        let (audio_queue_underruns, audio_queue_dropped_frames) = {
+            let mixer = self.mixer.lock();
+            (mixer.underruns, mixer.dropped_frames)
+        };
         let metrics = self.metrics.lock();
         let mut pairings = self.pairings.lock();
         HubStatus {
@@ -341,6 +385,9 @@ impl HubService {
             paired_profiles: pairings.paired_count(),
             microphone_active: self.microphone.lock().is_some(),
             diagnostic_log_path: diagnostic_log_path().display().to_string(),
+            audio_queue_underruns,
+            audio_queue_dropped_frames,
+            audio_slow_disconnects: metrics.audio_slow_disconnects,
         }
     }
 
@@ -373,8 +420,18 @@ impl HubService {
     }
 
     pub async fn serve_listener(self, listener: TcpListener) -> std::io::Result<()> {
+        let mut clock = interval(Duration::from_millis(10));
+        clock.set_missed_tick_behavior(MissedTickBehavior::Burst);
+        let mut sequence = 0_u64;
         loop {
-            let (stream, peer_addr) = listener.accept().await?;
+            let (stream, peer_addr) = tokio::select! {
+                accepted = listener.accept() => accepted?,
+                _ = clock.tick() => {
+                    self.mix_tick(sequence);
+                    sequence = sequence.wrapping_add(1);
+                    continue;
+                }
+            };
             if !peer_addr.ip().is_loopback() {
                 continue;
             }
@@ -387,7 +444,43 @@ impl HubService {
         }
     }
 
+    fn mix_tick(&self, sequence: u64) {
+        let mut slow = Vec::new();
+        let underrun = {
+            let sessions = self.sessions.lock();
+            let clients = self.audio_clients.lock();
+            let mut mixer = self.mixer.lock();
+            let before = mixer.underruns;
+            mixer.advance();
+            for (id, sender) in clients.iter() {
+                let Some(session) = sessions.get(id) else {
+                    continue;
+                };
+                let endpoint = MixEndpoint {
+                    endpoint_id: session.endpoint_id,
+                    channel_id: session.channel_id,
+                };
+                let frame = encode_downlink_frame(session, mixer.mix_for(endpoint), sequence);
+                if sender.try_send(frame).is_err() {
+                    slow.push(*id);
+                }
+            }
+            mixer.underruns > before
+        };
+        if underrun {
+            write_diagnostic_event("audio_input_underrun");
+        }
+        for id in slow {
+            self.metrics.lock().audio_slow_disconnects += 1;
+            write_diagnostic_event("audio_output_backpressure");
+            self.revoke_session(id);
+        }
+    }
+
     async fn handle_connection(&self, stream: TcpStream) -> Result<(), ConnectionError> {
+        stream
+            .set_nodelay(true)
+            .map_err(ConnectionError::Transport)?;
         let mut socket = accept_async(stream)
             .await
             .map_err(ConnectionError::WebSocket)?;
@@ -404,15 +497,40 @@ impl HubService {
                 .map_err(ConnectionError::WebSocket)?;
             return Err(ConnectionError::RejectedAuthentication);
         };
+        let (sender, mut downlinks) = mpsc::channel(32);
+        {
+            let sessions = self.sessions.lock();
+            let mut clients = self.audio_clients.lock();
+            if !sessions.contains_key(&session_id) || clients.contains_key(&session_id) {
+                return Err(ConnectionError::RejectedAuthentication);
+            }
+            clients.insert(session_id, sender);
+        }
         self.metrics.lock().authenticated_audio_connections += 1;
         write_diagnostic_event("audio_authenticated");
 
+        let result = async {
         socket
             .send(Message::Text("{\"type\":\"AUDIO_READY\"}".into()))
             .await
             .map_err(ConnectionError::WebSocket)?;
 
-        while let Some(message) = socket.next().await {
+        loop {
+            let message = tokio::select! {
+                message = socket.next() => {
+                    let Some(message) = message else { break };
+                    message
+                },
+                output = downlinks.recv() => {
+                    let Some(output) = output else { break };
+                    if !self.sessions.lock().contains_key(&session_id) { break; }
+                    match timeout(Duration::from_secs(2), socket.send(Message::Binary(output.into()))).await {
+                        Ok(Ok(())) => {},
+                        _ => { write_diagnostic_event("audio_output_send_failed"); break; }
+                    }
+                    continue;
+                }
+            };
             let message = match message {
                 Ok(message) => message,
                 Err(error) => {
@@ -422,11 +540,7 @@ impl HubService {
             };
             match message {
                 Message::Binary(frame) => {
-                    if let Some(output) = self.process_audio_frame(&session, &frame)
-                        && socket.send(Message::Binary(output.into())).await.is_err()
-                    {
-                        break;
-                    }
+                    self.process_audio_frame(session_id, &session, &frame);
                 }
                 Message::Close(_) => break,
                 Message::Ping(payload) => {
@@ -437,8 +551,16 @@ impl HubService {
                 _ => self.reject_frame(),
             }
         }
-        self.revoke_session(session_id);
         Ok(())
+        }.await;
+        {
+            let mut metrics = self.metrics.lock();
+            metrics.authenticated_audio_connections =
+                metrics.authenticated_audio_connections.saturating_sub(1);
+        }
+        write_diagnostic_event("audio_disconnected");
+        self.revoke_session(session_id);
+        result
     }
 
     fn authenticate(&self, auth: &AudioAuth) -> Option<(SessionId, SessionRecord)> {
@@ -455,13 +577,13 @@ impl HubService {
         }
     }
 
-    fn process_audio_frame(&self, session: &SessionRecord, frame: &[u8]) -> Option<Vec<u8>> {
+    fn process_audio_frame(&self, session_id: SessionId, session: &SessionRecord, frame: &[u8]) {
         let header = AudioFrameHeader::from_bytes(frame).ok();
         let accepted = header.is_some_and(|header| {
             let payload_offset = usize::from(AUDIO_HEADER_LENGTH);
             let payload_length = usize::try_from(header.payload_length).unwrap_or(usize::MAX);
             frame.len() == payload_offset.saturating_add(payload_length)
-                && payload_length <= MAX_AUDIO_PAYLOAD_BYTES
+                && payload_length == MAX_AUDIO_PAYLOAD_BYTES
                 && header.samples_per_channel == PCM_FRAME_SAMPLES as u16
                 && header.profile_id == *session.profile_id.as_bytes()
                 && header.endpoint_id == *session.endpoint_id.as_bytes()
@@ -469,6 +591,32 @@ impl HubService {
                 && header.epoch == session.epoch
         });
         if accepted {
+            let Some(samples) = decode_pcm(frame) else {
+                self.reject_frame();
+                return;
+            };
+            if !samples.iter().all(|sample| sample.is_finite()) {
+                self.reject_frame();
+                return;
+            }
+            {
+                let sessions = self.sessions.lock();
+                if !sessions.contains_key(&session_id) {
+                    return;
+                }
+                let endpoint = MixEndpoint {
+                    endpoint_id: session.endpoint_id,
+                    channel_id: session.channel_id,
+                };
+                let mut mixer = self.mixer.lock();
+                let before = mixer.dropped_frames;
+                if !mixer.enqueue(endpoint, samples) {
+                    return;
+                }
+                if mixer.dropped_frames > before {
+                    write_diagnostic_event("audio_input_overflow");
+                }
+            }
             let accepted_frames = {
                 let mut metrics = self.metrics.lock();
                 metrics.accepted_audio_frames += 1;
@@ -477,22 +625,8 @@ impl HubService {
             if accepted_frames == 1 || accepted_frames % 500 == 0 {
                 write_diagnostic_event("audio_frames_accepted");
             }
-            let samples = decode_pcm(frame)?;
-            let endpoint = MixEndpoint {
-                endpoint_id: session.endpoint_id,
-                channel_id: session.channel_id,
-            };
-            let mixed = {
-                let mut mixer = self.mixer.lock();
-                if !mixer.set_input(endpoint, samples) {
-                    return None;
-                }
-                mixer.mix_for(endpoint)
-            };
-            Some(encode_downlink_frame(session, mixed))
         } else {
             self.reject_frame();
-            None
         }
     }
 
@@ -558,8 +692,8 @@ fn protocol_is_compatible(range: ProtocolRange) -> bool {
         && current.minor <= range.maximum.minor
 }
 
-fn microphone_matrix() -> NMinusOneMatrix {
-    let mut matrix = NMinusOneMatrix::default();
+fn microphone_matrix() -> ClockedMixer {
+    let mut matrix = ClockedMixer::default();
     for channel_id in [
         ChannelId::CHANNEL_1,
         ChannelId::CHANNEL_2,
@@ -579,13 +713,17 @@ fn decode_pcm(frame: &[u8]) -> Option<[f32; PCM_FRAME_SAMPLES]> {
         return None;
     }
     let mut samples = [0.0_f32; PCM_FRAME_SAMPLES];
-    for (sample, bytes) in samples.iter_mut().zip(payload.as_chunks::<4>().0) {
-        *sample = f32::from_le_bytes(*bytes);
+    for (sample, bytes) in samples.iter_mut().zip(payload.chunks_exact(4)) {
+        *sample = f32::from_le_bytes(bytes.try_into().ok()?);
     }
     Some(samples)
 }
 
-fn encode_downlink_frame(session: &SessionRecord, samples: [f32; PCM_FRAME_SAMPLES]) -> Vec<u8> {
+fn encode_downlink_frame(
+    session: &SessionRecord,
+    samples: [f32; PCM_FRAME_SAMPLES],
+    sequence: u64,
+) -> Vec<u8> {
     let header = AudioFrameHeader {
         magic: shared_proto::AUDIO_MAGIC,
         header_length: AUDIO_HEADER_LENGTH,
@@ -596,7 +734,7 @@ fn encode_downlink_frame(session: &SessionRecord, samples: [f32; PCM_FRAME_SAMPL
         profile_id: *session.profile_id.as_bytes(),
         endpoint_id: *session.endpoint_id.as_bytes(),
         epoch: session.epoch,
-        sequence: 0,
+        sequence,
         payload_length: MAX_AUDIO_PAYLOAD_BYTES as u32,
     };
     let mut frame = Vec::with_capacity(usize::from(AUDIO_HEADER_LENGTH) + MAX_AUDIO_PAYLOAD_BYTES);
@@ -633,6 +771,8 @@ pub enum AdmissionError {
 
 #[derive(Debug, thiserror::Error)]
 enum ConnectionError {
+    #[error("audio transport setup failed")]
+    Transport(std::io::Error),
     #[error("websocket error: {0}")]
     WebSocket(tokio_tungstenite::tungstenite::Error),
     #[error("audio authentication is required")]

@@ -1,5 +1,3 @@
-#![allow(clippy::unwrap_used, clippy::expect_used)]
-
 use meet_bridge_hub_core::{HubConfig, HubService};
 use shared_proto::ChannelId;
 use uuid::Uuid;
@@ -31,4 +29,21 @@ fn emergency_stop_revokes_every_session() {
         .unwrap();
     assert_eq!(hub.revoke_all_sessions(), 2);
     assert_eq!(hub.status().active_sessions, 0);
+}
+
+#[test]
+fn replacement_is_single_endpoint_and_old_cleanup_cannot_revoke_new_session() {
+    let hub = HubService::new(HubConfig::default());
+    let profile = Uuid::new_v4();
+    let endpoint = Uuid::new_v4();
+    let old = hub
+        .admit_session(profile, endpoint, ChannelId::CHANNEL_1, 1)
+        .unwrap();
+    let new = hub
+        .admit_session(profile, endpoint, ChannelId::CHANNEL_2, 2)
+        .unwrap();
+    assert_eq!(hub.status().active_sessions, 1);
+    assert!(!hub.revoke_session(old.session_id));
+    assert_eq!(hub.status().active_sessions, 1);
+    assert!(hub.revoke_session(new.session_id));
 }

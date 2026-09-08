@@ -1,5 +1,3 @@
-#![allow(clippy::unwrap_used, clippy::expect_used)]
-
 use meet_bridge_shared_proto::*;
 
 #[test]

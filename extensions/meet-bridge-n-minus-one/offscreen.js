@@ -62,7 +62,13 @@ async function sendToBackground(type, payload = {}) {
 
 async function ensureAudioContext() {
   if (!audioContext || audioContext.state === "closed") {
-    audioContext = new AudioContext({ latencyHint: "interactive" });
+    audioContext = new AudioContext({
+      latencyHint: "interactive",
+      // Hub PCM is exactly 48 kHz / 480 frames every 10 ms. Pin the producer
+      // context to that clock so a Windows device default cannot drift the
+      // Hub frame cadence.
+      sampleRate: 48_000,
+    });
     audioWorkletReady = Promise.all([
       audioContext.audioWorklet.addModule(chrome.runtime.getURL("pcm-output-worklet.js")),
       audioContext.audioWorklet.addModule(chrome.runtime.getURL("pcm-page-output-worklet.js")),
@@ -1259,7 +1265,15 @@ function connectHubAudio(route, grant, onDisconnected) {
   if (!profileBytes || !endpointBytes) return { close() {} };
   const input = route.mixBus ? new AudioWorkletNode(audioContext, "meet-bridge-pcm-page-output", { numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [1] }) : null;
   const gain = input ? audioContext.createGain() : null;
-  if (gain && input) { gain.gain.value = 0.85; input.connect(gain); gain.connect(route.mixBus); }
+  if (gain && input) {
+    gain.gain.value = 0.85;
+    input.connect(gain);
+    gain.connect(route.mixBus);
+    // Hub downlink must be audible to the organizer as well as sent into the
+    // meeting's virtual microphone. monitorGain is channel-scoped and feeds
+    // only the local hardware output; it never reaches hubTap or the Hub.
+    if (route.monitorGain) input.connect(route.monitorGain);
+  }
   let socket;
   try {
     socket = new WebSocket(`ws://${grant.endpoint.host}:${grant.endpoint.port}${grant.endpoint.path}`);
@@ -1293,8 +1307,11 @@ function connectHubAudio(route, grant, onDisconnected) {
     if (view.getUint8(0) !== 0x4d || !(view.getUint8(9) & 2)) return;
     const samples = new Float32Array(data.slice(64));
     const packet = new ArrayBuffer(8 + samples.length * 2);
-    new DataView(packet).setUint32(0, 48000, true);
-    new Int16Array(packet, 8).set(samples.map((sample) => Math.round(Math.max(-1, Math.min(1, sample)) * 32767)));
+    new DataView(packet).setUint32(0, 48_000, true);
+    const pcm = new Int16Array(packet, 8);
+    for (let index = 0; index < samples.length; index += 1) {
+      pcm[index] = Math.round(Math.max(-1, Math.min(1, samples[index])) * 32767);
+    }
     input?.port.postMessage(packet, [packet]);
   };
   const removeConsumer = route.hubTap.addPcmConsumer((samples) => {

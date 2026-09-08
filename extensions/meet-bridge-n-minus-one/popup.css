@@ -12,8 +12,8 @@
 }
 
 body {
-  width: 390px;
-  min-height: 520px;
+  width: 410px;
+  min-height: 480px;
   margin: 0;
   background:
     radial-gradient(circle at 100% 0, rgba(87, 118, 255, 0.16), transparent 40%),
@@ -21,7 +21,7 @@ body {
 }
 
 main {
-  padding: 18px;
+  padding: 12px;
 }
 
 header,
@@ -35,7 +35,7 @@ footer,
 }
 
 header {
-  margin-bottom: 16px;
+  margin-bottom: 10px;
 }
 
 h1,
@@ -99,10 +99,10 @@ h2 {
 }
 
 .card {
-  margin-bottom: 12px;
-  padding: 14px;
+  margin-bottom: 8px;
+  padding: 11px;
   border: 1px solid #e2e7f0;
-  border-radius: 14px;
+  border-radius: 12px;
   background: rgba(255, 255, 255, 0.94);
   box-shadow: 0 6px 22px rgba(29, 43, 77, 0.05);
 }
@@ -175,13 +175,16 @@ h2 {
 .channel-tabs {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 6px;
+  gap: 7px;
 }
+
+.channel-tile { display: flex; min-width: 0; gap: 4px; }
 
 .channel-tab {
   display: flex;
   min-width: 0;
-  min-height: 48px;
+  min-height: 52px;
+  flex: 1;
   align-items: center;
   gap: 7px;
   border: 1px solid #e4e8f0;
@@ -190,6 +193,21 @@ h2 {
   color: #566078;
   text-align: left;
 }
+
+.channel-mic {
+  position: relative;
+  width: 31px;
+  min-width: 31px;
+  min-height: 52px;
+  padding: 0;
+  border: 1px solid #d9e1ed;
+  background: #fff;
+  color: #3d67b2;
+}
+
+.channel-mic svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.8; }
+.channel-mic.is-muted { color: #b42318; background: #fff0ef; border-color: #f5c3c0; }
+.channel-mic.is-muted::after { content: ""; position: absolute; width: 22px; height: 2px; top: 25px; left: 4px; transform: rotate(-45deg); border-radius: 99px; background: currentColor; }
 
 .channel-tab.active {
   border-color: #5267ed;
@@ -287,15 +305,18 @@ h2 {
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  margin-top: 10px;
+  margin-top: 8px;
 }
 
 .channel-audio-actions {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 7px;
-  margin-top: 8px;
+  margin-top: 7px;
 }
+
+.channel-audio-actions button { min-height: 32px; }
+.speaker-icon { margin-right: 5px; font-size: 14px; }
 
 .monitor-on {
   background: #e7f1ff;
@@ -326,9 +347,7 @@ h2 {
 }
 
 .channel-stop {
-  width: 100%;
-  min-height: 28px;
-  margin-top: 8px;
+  min-height: 32px;
   background: #f2f3f6;
   color: #6f7788;
   font-size: 11px;
@@ -356,7 +375,7 @@ h2 {
 }
 
 .talk-card .small {
-  margin-top: 8px;
+  margin-top: 5px;
   margin-bottom: 0;
 }
 
@@ -470,7 +489,7 @@ button:disabled {
 }
 
 .section-heading {
-  margin-bottom: 8px;
+  margin-bottom: 6px;
 }
 
 .count {
@@ -582,3 +601,101 @@ button:disabled {
 footer {
   margin-top: 4px;
 }
+
+/* Channel map: channel 1 is deliberately the main workspace; 2 and 3 are
+   compact companion channels.  Each tile owns both of its audio controls. */
+body { width: 470px; min-height: 620px; }
+main { display: flex; flex-direction: column; padding: 14px; }
+header { order: 0; }
+.channel-card { order: 1; }
+.talk-card { order: 2; }
+.current-card { order: 3; }
+.mixing-card { order: 4; }
+.eligible-card { order: 5; }
+.hub-card { order: 6; }
+.preset-card { order: 7; }
+.shortcut-card { order: 8; }
+.safety-note { order: 9; }
+.privacy-card { order: 10; }
+#message { order: 11; }
+footer { order: 12; }
+.channel-tabs { grid-template-columns: minmax(0, 1.58fr) minmax(0, 1fr); gap: 8px; }
+.channel-side { display: grid; grid-template-rows: 1fr 1fr; gap: 8px; min-width: 0; }
+.channel-tile { display: grid; grid-template-rows: 1fr auto; gap: 6px; padding: 8px; border: 1px solid transparent; border-radius: 12px; background: #eef2fb; }
+.channel-tile:has(.channel-tab[data-channel-id="1"]) { background: #e4eafb; }
+.channel-tile:has(.channel-tab[data-channel-id="2"]) { background: #f0ebfa; }
+.channel-tile:has(.channel-tab[data-channel-id="3"]) { background: #e6f4f0; }
+.channel-tile:has(.channel-tab.active[data-channel-id="1"]) { border-color: #4964ce; background: #d8e2ff; box-shadow: inset 0 0 0 1px rgba(73,100,206,.16); }
+.channel-tile:has(.channel-tab.active[data-channel-id="2"]) { border-color: #8a5bd7; background: #eadffd; box-shadow: inset 0 0 0 1px rgba(138,91,215,.13); }
+.channel-tile:has(.channel-tab.active[data-channel-id="3"]) { border-color: #238b78; background: #d9f0e9; box-shadow: inset 0 0 0 1px rgba(35,139,120,.13); }
+.channel-tab, .channel-tab.active, .channel-tab[data-channel-id="2"].active, .channel-tab[data-channel-id="3"].active { min-height: 0; padding: 2px; border: 0; box-shadow: none; background: transparent; color: #33415f; }
+.channel-primary .channel-tab { align-items: center; gap: 10px; padding: 8px 5px; }
+.channel-primary .channel-index { width: 32px; height: 32px; flex-basis: 32px; border-radius: 10px; font-size: 14px; }
+.channel-primary .channel-tab-copy strong { font-size: 15px; }
+.channel-primary .channel-tab-copy small { font-size: 11px; }
+.channel-side .channel-tab { gap: 6px; }
+.channel-side .channel-index { width: 23px; height: 23px; flex-basis: 23px; }
+.channel-side .channel-tab-copy strong { font-size: 11px; }
+.channel-side .channel-tab-copy small { font-size: 9px; }
+.channel-icon-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.channel-mic, .channel-speaker { position: relative; display: grid; min-height: 31px; place-items: center; padding: 0; border: 1px solid rgba(49,70,108,.12); border-radius: 8px; background: rgba(255,255,255,.78); color: #4261b0; }
+.channel-mic svg, .channel-speaker svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.8; }
+.channel-primary .channel-mic, .channel-primary .channel-speaker { min-height: 35px; }
+.channel-mic.is-muted, .channel-speaker.is-muted { color: #b42318; border-color: #f1bdb9; background: #fff0ef; }
+.channel-mic.is-muted::after, .channel-speaker.is-muted::after { content: ""; position: absolute; width: 21px; height: 2px; top: 50%; left: 50%; transform: translate(-50%, -50%) rotate(-45deg); border-radius: 99px; background: currentColor; }
+.channel-control-row { margin-top: 7px; }
+.channel-control-row .small { display: none; }
+.channel-audio-actions { margin-top: 7px; }
+.talk-card { padding: 11px 12px; }
+.talk-card .control-heading { align-items: center; }
+.talk-card .small { display: none; }
+.hub-card { margin-top: 10px; }
+.current-card { margin-top: 10px; }
+
+/* Compact 500 x 580 popup: every channel has the same visual weight and the
+   shared input/output controls occupy the space formerly taken by channel 1. */
+body { width: 500px; min-height: 0; height: 580px; overflow-y: auto; }
+main { padding: 11px; }
+.card { margin-bottom: 7px; padding: 10px; }
+header { margin-bottom: 8px; }
+.channel-tabs { grid-template-columns: 1.2fr 1fr 1fr; gap: 6px; }
+.channel-side { display: contents; }
+.channel-tile, .channel-primary { min-height: 86px; padding: 7px; grid-template-rows: 1fr auto; gap: 5px; }
+.channel-primary .channel-tab, .channel-side .channel-tab { align-items: center; gap: 7px; padding: 2px; }
+.channel-primary .channel-index, .channel-side .channel-index { width: 25px; height: 25px; flex-basis: 25px; border-radius: 8px; font-size: 12px; }
+.channel-primary .channel-tab-copy strong, .channel-side .channel-tab-copy strong { font-size: 12px; }
+.channel-primary .channel-tab-copy small, .channel-side .channel-tab-copy small { font-size: 9px; }
+.channel-primary .channel-mic, .channel-primary .channel-speaker, .channel-mic, .channel-speaker { min-height: 28px; }
+.channel-icon-actions { gap: 5px; }
+.global-audio-controls { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; margin-top: 7px; }
+.global-audio-controls button { min-height: 32px; }
+.channel-statuses { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 7px; }
+.channel-voice-state, .channel-listen-state { margin: 0; min-width: 0; border-radius: 8px; padding: 6px 8px; font-size: 11px; font-weight: 700; line-height: 1.3; }
+.channel-voice-state { background: #edf3ff; color: #3157a7; }
+.channel-listen-state { background: #eaf7f2; color: #20745f; }
+.channel-card.is-muted .channel-voice-state { background: #fff0ef; color: #ad3c32; }
+.current-card { margin-top: 7px; }
+.current-card .muted { margin-top: 3px; }
+.current-card .primary { margin-top: 8px; }
+
+.channel-heading-copy { display: flex; min-width: 0; align-items: center; gap: 7px; }
+.channel-note { overflow: hidden; color: #7a8293; font-size: 10px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.global-audio-controls button { display: flex; align-items: center; justify-content: center; gap: 6px; padding: 0 8px; font-size: 12px; text-align: center; }
+.global-icon { position: relative; display: grid; width: 15px; height: 15px; flex: 0 0 15px; place-items: center; }
+.global-audio-controls svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.8; }
+.global-control-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* A state change always has both a color cue and an explicit diagonal slash. */
+#toggleSelfMute.talk-stop .global-icon::after, #toggleAllMonitor.monitor-off .global-icon::after { content: ""; position: absolute; width: 20px; height: 2px; transform: rotate(-45deg); border-radius: 99px; background: currentColor; }
+.channel-tab { justify-content: center; text-align: center; }
+.channel-tab-copy strong, .channel-tab-copy small { text-align: center; }
+.channel-voice-state, .channel-listen-state { display: flex; align-items: center; justify-content: center; min-height: 30px; padding: 5px 7px; font-size: 12px; text-align: center; }
+
+/* Each global control and its live status share one horizontal row and height. */
+.global-audio-controls { grid-template-columns: 1fr; gap: 5px; }
+.global-control-line { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 6px; }
+.global-audio-controls button, .channel-voice-state, .channel-listen-state { min-height: 30px; height: 30px; }
+.channel-voice-state, .channel-listen-state { margin: 0; padding: 4px 7px; }
+.channel-voice-state.is-on, .channel-listen-state.is-on { background: #ddf7e8; color: #18794e; }
+.channel-voice-state.is-off, .channel-listen-state.is-off { background: #ffe8e7; color: #b42318; }
+.talk-start, .monitor-on { background: #ddf7e8; color: #18794e; }
+.talk-stop, .monitor-off { background: #ffe8e7; color: #b42318; }

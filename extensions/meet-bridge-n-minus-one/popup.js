@@ -12,16 +12,9 @@ const elements = {
   engineState: document.querySelector("#engineState"),
   channelCard: document.querySelector(".channel-card"),
   channelRouteSummary: document.querySelector("#channelRouteSummary"),
-  channelName: document.querySelector("#channelName"),
-  renameChannel: document.querySelector("#renameChannel"),
   channelVoiceState: document.querySelector("#channelVoiceState"),
   channelHint: document.querySelector("#channelHint"),
-  toggleChannelMute: document.querySelector("#toggleChannelMute"),
-  toggleChannelMonitor: document.querySelector("#toggleChannelMonitor"),
-  stopChannel: document.querySelector("#stopChannel"),
-  talkCard: document.querySelector(".talk-card"),
-  selfVoiceState: document.querySelector("#selfVoiceState"),
-  selfVoiceHint: document.querySelector("#selfVoiceHint"),
+  toggleAllMonitor: document.querySelector("#toggleAllMonitor"),
   toggleSelfMute: document.querySelector("#toggleSelfMute"),
   hubState: document.querySelector("#hubState"),
   toggleHub: document.querySelector("#toggleHub"),
@@ -176,11 +169,16 @@ function render(data) {
   elements.routeHeading.textContent = `${selectedChannelName}的标签页`;
   elements.stopAll.disabled = busy || bridgeTabs.length === 0;
   const hub = data.hub || { enabled: false, state: "disabled", error: "" };
+  const hubReadyRoutes = bridgeTabs.filter((route) => route.hubState === "ready").length;
   const hubStateLabel = hub.enabled
     ? hub.state === "connected"
-      ? "已连接"
+      ? bridgeTabs.length === 0
+        ? "控制已连接 · 等待会议"
+        : hubReadyRoutes === bridgeTabs.length
+          ? `音频已就绪 · ${hubReadyRoutes}/${bridgeTabs.length}`
+          : `控制已连接 · 音频 ${hubReadyRoutes}/${bridgeTabs.length}`
       : hub.state === "connecting"
-        ? "连接中"
+        ? "控制连接中"
         : hub.state === "error" || hub.state === "disconnected"
           ? "需要 Hub"
           : "已启用"
@@ -235,52 +233,51 @@ function render(data) {
     document.querySelector(`#channelTabCount${id}`).textContent = `${count} 路`;
   }
   elements.channelRouteSummary.textContent = `${selectedRoutes.length} 路 / 共 ${bridgeTabs.length}`;
-  elements.channelName.value = selectedChannelName;
-  elements.channelName.disabled = busy;
-  elements.renameChannel.disabled = busy;
-  elements.stopChannel.disabled = busy || selectedRoutes.length === 0;
-
-  const channelMuted = Boolean(
-    data.channelConfig?.micMuted?.[selectedChannelId],
+  const speakingChannels = Boolean(data.selfMuted)
+    ? []
+    : [1, 2, 3].filter((id) => !Boolean(data.channelConfig?.micMuted?.[id]));
+  const listeningChannels = [1, 2, 3].filter(
+    (id) => !Boolean(data.channelConfig?.monitorMuted?.[id]),
   );
-  const channelEffectivelyMuted = Boolean(data.selfMuted) || channelMuted;
-  elements.channelCard.classList.toggle("is-muted", channelEffectivelyMuted);
-  elements.channelVoiceState.textContent = data.selfMuted
-    ? "已被总开关静音"
-    : channelMuted
-      ? "本频道听不见你"
-      : "本频道可以听见你";
-  elements.channelHint.textContent = data.selfMuted
-    ? "先恢复本人声音总开关，频道设置才会生效。"
-    : "只影响你在本频道的发言，频道转发保持运行。";
-  elements.toggleChannelMute.textContent = channelMuted
-    ? "恢复本频道发言"
-    : "本频道静音";
-  elements.toggleChannelMute.className = channelMuted ? "talk-start" : "talk-stop";
-  elements.toggleChannelMute.disabled = busy || Boolean(data.selfMuted);
-  const monitorMuted = Boolean(
-    data.channelConfig?.monitorMuted?.[selectedChannelId],
-  );
-  elements.toggleChannelMonitor.textContent = monitorMuted
-    ? "恢复本地监听"
-    : "暂停本地监听";
-  elements.toggleChannelMonitor.className = monitorMuted
+  elements.channelCard.classList.toggle("is-muted", speakingChannels.length === 0);
+  elements.channelVoiceState.textContent = speakingChannels.length
+    ? `频道 ${speakingChannels.join("、")}：接收我的声音`
+    : "所有频道不接收我的声音";
+  elements.channelHint.textContent = listeningChannels.length
+    ? `频道 ${listeningChannels.join("、")}：向我播放声音`
+    : "所有频道不向我播放声音";
+  elements.channelVoiceState.classList.toggle("is-on", speakingChannels.length > 0);
+  elements.channelVoiceState.classList.toggle("is-off", speakingChannels.length === 0);
+  elements.channelHint.classList.toggle("is-on", listeningChannels.length > 0);
+  elements.channelHint.classList.toggle("is-off", listeningChannels.length === 0);
+  for (const button of document.querySelectorAll("[data-channel-mic]")) {
+    const id = normalizeChannelId(button.dataset.channelMic);
+    const muted = Boolean(data.selfMuted) || Boolean(data.channelConfig?.micMuted?.[id]);
+    button.classList.toggle("is-muted", muted);
+    button.disabled = busy || Boolean(data.selfMuted);
+    button.setAttribute("aria-label", muted ? `恢复${channelName(data, id)}麦克风` : `关闭${channelName(data, id)}麦克风`);
+    button.title = muted ? `恢复${channelName(data, id)}麦克风` : `关闭${channelName(data, id)}麦克风`;
+  }
+  for (const button of document.querySelectorAll("[data-channel-monitor]")) {
+    const id = normalizeChannelId(button.dataset.channelMonitor);
+    const muted = Boolean(data.channelConfig?.monitorMuted?.[id]);
+    button.classList.toggle("is-muted", muted);
+    button.disabled = busy;
+    button.setAttribute("aria-label", muted ? `恢复${channelName(data, id)}扬声器` : `关闭${channelName(data, id)}扬声器`);
+    button.title = muted ? `恢复${channelName(data, id)}扬声器` : `关闭${channelName(data, id)}扬声器`;
+  }
+  const monitorMuted = listeningChannels.length === 0;
+  elements.toggleAllMonitor.querySelector(".global-control-label").textContent =
+    "总开关（向我播放声音）";
+  elements.toggleAllMonitor.className = monitorMuted
     ? "monitor-off"
     : "monitor-on";
-  elements.toggleChannelMonitor.disabled = busy;
+  elements.toggleAllMonitor.disabled = busy;
 
   const selfMuted = Boolean(data.selfMuted);
-  elements.talkCard.classList.toggle("is-muted", selfMuted);
-  elements.selfVoiceState.textContent = selfMuted
-    ? "全部频道听不见你"
-    : "按各频道设置发言";
-  elements.selfVoiceHint.textContent = selfMuted
-    ? "三个频道仅暂停你的声音，会议和媒体仍继续转发。"
-    : "会议内麦克风保持开启；可在上方单独静音某个频道。";
-  elements.toggleSelfMute.textContent = selfMuted
-    ? "恢复全部频道"
-    : "全部频道静音";
-  elements.toggleSelfMute.className = selfMuted ? "talk-start" : "talk-stop";
+  elements.toggleSelfMute.querySelector(".global-control-label").textContent =
+    "总开关（接收我的声音）";
+  elements.toggleSelfMute.className = selfMuted ? "talk-stop" : "talk-start";
   elements.toggleSelfMute.disabled = busy;
 
   const preset = data.preset;
@@ -485,57 +482,52 @@ for (const button of document.querySelectorAll("[data-channel-id]")) {
       await callBackground("SELECT_CHANNEL", { channelId });
     }),
   );
+  button.addEventListener("dblclick", (event) => {
+    event.preventDefault();
+    const channelId = normalizeChannelId(button.dataset.channelId);
+    const current = channelName(popupData, channelId);
+    const nextName = window.prompt("频道名称（最多 18 个字符）", current);
+    if (nextName === null || nextName.trim() === current) return;
+    withBusy(async () => {
+      await callBackground("RENAME_CHANNEL", { channelId, name: nextName });
+      showMessage("频道名称已保存。");
+    });
+  });
 }
 
-elements.renameChannel.addEventListener("click", () => {
-  const nextName = elements.channelName.value;
-  return withBusy(async () => {
-    const channelId = normalizeChannelId(popupData?.channelConfig?.selected);
-    await callBackground("RENAME_CHANNEL", {
-      channelId,
-      name: nextName,
+for (const button of document.querySelectorAll("[data-channel-mic]")) {
+  button.addEventListener("click", (event) => {
+    event.stopPropagation();
+    return withBusy(async () => {
+      const channelId = normalizeChannelId(button.dataset.channelMic);
+      const muted = !Boolean(popupData?.channelConfig?.micMuted?.[channelId]);
+      await callBackground("SET_CHANNEL_MIC_MUTED", { channelId, muted });
+      showMessage(muted ? `${channelName(popupData, channelId)}已关闭麦克风。` : `${channelName(popupData, channelId)}已恢复麦克风。`);
     });
-    showMessage("频道名称已保存。");
   });
-});
+}
 
-elements.channelName.addEventListener("keydown", (event) => {
-  if (event.key === "Enter") elements.renameChannel.click();
-});
+for (const button of document.querySelectorAll("[data-channel-monitor]")) {
+  button.addEventListener("click", (event) => {
+    event.stopPropagation();
+    return withBusy(async () => {
+      const channelId = normalizeChannelId(button.dataset.channelMonitor);
+      const muted = !Boolean(popupData?.channelConfig?.monitorMuted?.[channelId]);
+      await callBackground("SET_CHANNEL_MONITOR_MUTED", { channelId, muted });
+      showMessage(muted ? `${channelName(popupData, channelId)}已关闭扬声器。` : `${channelName(popupData, channelId)}已恢复扬声器。`);
+    });
+  });
+}
 
-elements.toggleChannelMute.addEventListener("click", () =>
+elements.toggleAllMonitor.addEventListener("click", () =>
   withBusy(async () => {
-    const channelId = normalizeChannelId(popupData?.channelConfig?.selected);
-    const muted = !Boolean(popupData?.channelConfig?.micMuted?.[channelId]);
-    await callBackground("SET_CHANNEL_MIC_MUTED", { channelId, muted });
+    const muted = !Boolean(popupData?.channelConfig?.monitorAllMuted);
+    await callBackground("SET_ALL_MONITOR_MUTED", { muted });
     showMessage(
       muted
-        ? `${channelName(popupData, channelId)}已暂停本人声音，转发继续。`
-        : `${channelName(popupData, channelId)}已恢复本人声音。`,
+        ? "已暂停全部会议声音；远端桥接不受影响。"
+        : "正在收听全部频道的会议声音。",
     );
-  }),
-);
-
-elements.toggleChannelMonitor.addEventListener("click", () =>
-  withBusy(async () => {
-    const channelId = normalizeChannelId(popupData?.channelConfig?.selected);
-    const muted = !Boolean(
-      popupData?.channelConfig?.monitorMuted?.[channelId],
-    );
-    await callBackground("SET_CHANNEL_MONITOR_MUTED", { channelId, muted });
-    showMessage(
-      muted
-        ? `已暂停监听${channelName(popupData, channelId)}；远端桥接不受影响。`
-        : `已恢复监听${channelName(popupData, channelId)}。`,
-    );
-  }),
-);
-
-elements.stopChannel.addEventListener("click", () =>
-  withBusy(async () => {
-    const channelId = normalizeChannelId(popupData?.channelConfig?.selected);
-    await callBackground("STOP_CHANNEL", { channelId });
-    showMessage(`${channelName(popupData, channelId)}已停止。`);
   }),
 );
 
@@ -641,7 +633,7 @@ elements.toggleHub.addEventListener("click", () =>
     if (enabled && result.state !== "connecting" && result.state !== "connected") {
       throw new Error(result.error || "无法连接 Meet Bridge Hub。");
     }
-    showMessage(enabled ? "正在连接本机 Meet Bridge Hub…" : "跨 Profile Hub 已关闭；单 Profile 桥接保持不变。");
+    showMessage(enabled ? "Hub 控制已连接，正在为频道中的会议建立音频会话…" : "跨 Profile Hub 已关闭；单 Profile 桥接保持不变。");
   }),
 );
 
@@ -655,7 +647,7 @@ elements.confirmHubPairing.addEventListener("click", () =>
       throw new Error("确认码与 Hub 显示的代码不一致。");
     }
     await callBackground("CONFIRM_HUB_PAIRING", { confirmationCode });
-    showMessage("已发送配对确认，正在等待 Hub 授权。");
+    showMessage("配对完成，正在为频道中的会议建立音频会话…");
   }),
 );
 

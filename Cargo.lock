@@ -2320,7 +2320,7 @@ dependencies = [
 
 [[package]]
 name = "meet-bridge-hub-core"
-version = "0.1.0-alpha.0"
+version = "0.1.1"
 dependencies = [
  "base64 0.23.1",
  "bytes",
@@ -2350,7 +2350,7 @@ dependencies = [
 
 [[package]]
 name = "meet-bridge-hub-ui"
-version = "0.1.0-alpha.0"
+version = "0.1.1"
 dependencies = [
  "meet-bridge-hub-core",
  "meet-bridge-shared-proto",
@@ -2363,11 +2363,12 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
+ "winreg",
 ]
 
 [[package]]
 name = "meet-bridge-native-broker"
-version = "0.1.0-alpha.0"
+version = "0.1.1"
 dependencies = [
  "base64 0.23.1",
  "bytes",
@@ -2388,7 +2389,7 @@ dependencies = [
 
 [[package]]
 name = "meet-bridge-shared-proto"
-version = "0.1.0-alpha.0"
+version = "0.1.1"
 dependencies = [
  "base64 0.23.1",
  "bitflags 2.13.1",

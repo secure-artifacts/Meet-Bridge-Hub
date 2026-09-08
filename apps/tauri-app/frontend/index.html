@@ -5,137 +5,140 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Meet Bridge Hub</title>
     <style>
-      body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 0; background: #10141b; color: #f5f7fb; }
-      main { max-width: 680px; margin: 0 auto; padding: 32px; }
-      h1 { margin: 0 0 8px; font-size: 26px; }
-      p { color: #b8c0ce; }
-      .card { background: #1a202b; border: 1px solid #2b3546; border-radius: 12px; padding: 20px; margin-top: 20px; }
-      .status { color: #77d7a8; font-weight: 650; }
-      button { margin-top: 14px; border: 0; border-radius: 8px; padding: 10px 14px; font-weight: 650; cursor: pointer; }
-      button.danger { background: #d94b57; color: #fff; }
+      :root { color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #10141b; color: #f5f7fb; }
+      * { box-sizing: border-box; }
+      body { margin: 0; background: radial-gradient(circle at 100% 0, #263a61 0, transparent 34%), #10141b; }
+      main { max-width: 760px; margin: 0 auto; padding: 22px; }
+      h1, h2, p { margin: 0; }
+      header, .section-head, .service-row, .mic-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
+      h1 { font-size: 25px; letter-spacing: -.03em; }
+      h2 { font-size: 14px; }
+      .build, .hint, .diagnostic { color: #aeb8c9; font-size: 12px; line-height: 1.45; }
+      .build { margin-top: 3px; }
+      .state { border-radius: 999px; padding: 6px 10px; background: #173d31; color: #75dfaa; font-size: 12px; font-weight: 700; white-space: nowrap; }
+      .card { margin-top: 12px; padding: 14px; border: 1px solid #2b3546; border-radius: 13px; background: rgba(26, 32, 43, .94); }
+      .metrics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 11px; }
+      .metric { min-width: 0; padding: 10px; border-radius: 9px; background: #10151e; }
+      .metric span { display: block; overflow: hidden; color: #98a5ba; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+      .metric strong { display: block; margin-top: 4px; color: #f5f7fb; font-size: 18px; }
+      .address { margin-top: 9px; color: #aeb8c9; font-size: 12px; }
       code { color: #b8c9ff; }
-      .pairing-code { display: inline-flex; align-items: center; gap: 10px; margin-top: 8px; padding: 8px 10px; border-radius: 8px; background: #10141b; }
-      .pairing-code code { font: 700 22px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .12em; }
-      .pairing-code button { margin: 0; padding: 7px 10px; background: #5267ed; color: #fff; }
-      .small { font-size: 13px; }
+      .timing { margin-top: 10px; color: #aeb8c9; font-size: 11px; }
+      .service-row + .service-row, .mic-row { margin-top: 11px; border-top: 1px solid #2b3546; padding-top: 11px; }
+      .service-copy { min-width: 0; }
+      .service-copy strong { font-size: 13px; }
+      button { flex: 0 0 auto; min-height: 34px; border: 0; border-radius: 8px; padding: 0 11px; background: #5267ed; color: #fff; font: 700 12px inherit; cursor: pointer; }
+      button:disabled { opacity: .5; cursor: not-allowed; }
+      .secondary { background: #263651; color: #cdd9ff; }
+      .pairing { margin-top: 11px; border-top: 1px solid #2b3546; padding-top: 11px; }
+      .pairing > p { color: #aeb8c9; font-size: 12px; }
+      .pairing-code { display: inline-flex; align-items: center; gap: 9px; margin: 8px 7px 0 0; padding: 7px 8px 7px 10px; border-radius: 8px; background: #10141b; }
+      .pairing-code code { font: 700 20px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .12em; }
+      .pairing-code button { min-height: 30px; }
+      details { margin-top: 10px; }
+      summary { color: #aeb8c9; cursor: pointer; font-size: 12px; }
+      .diagnostic { margin-top: 6px; overflow-wrap: anywhere; }
+      @media (max-width: 480px) { main { padding: 14px; } .metrics { gap: 6px; } }
     </style>
   </head>
   <body>
     <main>
-      <h1>Meet Bridge Hub</h1>
-      <p class="status" id="state">正在检查本机 Hub…</p>
+      <header>
+        <div><h1>Meet Bridge Hub</h1><p class="build">0.1.0-alpha.2 · Windows 未签名测试版</p></div>
+        <span id="state" class="state">正在检查…</span>
+      </header>
+
       <section class="card">
-        <strong>运行状态</strong>
-        <p id="address">未连接</p>
-        <p id="sessions">已授权端点：0</p>
-        <p id="audio-connections">已认证音频连接：0</p>
-        <p id="audio-frames">接收音频帧：0；拒绝：0</p>
-        <details><summary>诊断</summary><p id="diagnostic-path" class="small"></p></details>
+        <div class="section-head"><h2>桥接状态</h2><span id="address" class="address">未连接</span></div>
+        <div class="metrics">
+          <div class="metric"><span>已授权端点</span><strong id="sessions">0</strong></div>
+          <div class="metric"><span>认证音频连接</span><strong id="audio-connections">0</strong></div>
+          <div class="metric"><span>接收音频帧</span><strong id="audio-frames">0</strong></div>
+          <div class="metric"><span>拒绝音频帧</span><strong id="audio-rejected">0</strong></div>
+        </div>
+        <p id="audio-timing" class="timing">音频缓冲：等待连接</p>
+        <details><summary>本地诊断信息</summary><p id="diagnostic-path" class="diagnostic"></p></details>
       </section>
+
       <section class="card">
-        <strong>Chrome 扩展连接</strong>
-        <p id="native-host">正在检查 Native Host…</p>
-        <button id="native-host-install">安装 Chrome 连接器</button>
-        <p id="microphone">物理麦克风：未启动</p>
-        <button id="microphone-toggle">启动 Hub 麦克风</button>
-        <p id="pairing">没有待确认的 Profile。</p>
-        <p id="pairing-copy-status" class="small"></p>
+        <div class="service-row">
+          <div class="service-copy"><strong>Chrome 扩展连接</strong><p id="native-host" class="hint">正在检查连接器…</p></div>
+          <button id="native-host-install" class="secondary">安装连接器</button>
+        </div>
+        <div class="mic-row">
+          <div class="service-copy"><strong>Hub 麦克风</strong><p id="microphone" class="hint">物理麦克风：未启动</p></div>
+          <button id="microphone-toggle" class="secondary">启动麦克风</button>
+        </div>
+        <div class="pairing"><p id="pairing">没有待确认的 Profile。</p><p id="pairing-copy-status" class="hint"></p></div>
       </section>
-      <button class="danger" id="stop">停止全部桥接</button>
     </main>
     <script>
       const invoke = window.__TAURI__?.core?.invoke;
       let lastCopiedPairingCode = '';
+      const text = (selector, value) => { document.querySelector(selector).textContent = value; };
       async function refresh() {
         if (!invoke) {
-          document.querySelector('#state').textContent = '桌面连接未就绪：请关闭并重新打开 Meet Bridge Hub。';
+          text('#state', '桌面连接未就绪');
           document.querySelectorAll('button').forEach((button) => { button.disabled = true; });
           return;
         }
-        const status = await invoke('hub_status');
-        document.querySelector('#state').textContent = 'Hub 正在本机运行';
-        document.querySelector('#address').innerHTML = '仅回环地址：<code>' + status.bind_addr + '</code>';
-        document.querySelector('#sessions').textContent = '已授权端点：' + status.active_sessions;
-        document.querySelector('#audio-connections').textContent = '已认证音频连接：' + status.authenticated_audio_connections;
-        document.querySelector('#audio-frames').textContent = `接收音频帧：${status.accepted_audio_frames}；拒绝：${status.rejected_audio_frames}`;
-        document.querySelector('#diagnostic-path').textContent = '日志：' + status.diagnostic_log_path;
-        document.querySelector('#microphone').textContent = '物理麦克风：' + (status.microphone_active ? '已由 Hub 独占使用' : '未启动');
-        document.querySelector('#microphone-toggle').textContent = status.microphone_active ? '停止 Hub 麦克风' : '启动 Hub 麦克风';
-        const nativeHostReady = await invoke('native_host_registered');
-        document.querySelector('#native-host').textContent = nativeHostReady
-          ? 'Chrome 连接器已就绪（仅允许本扩展连接）'
-          : '尚未安装 Chrome 连接器。';
-        document.querySelector('#native-host-install').textContent = nativeHostReady ? '重新安装 Chrome 连接器' : '安装 Chrome 连接器';
-        renderPairing(status);
+        try {
+          const status = await invoke('hub_status');
+          text('#state', 'Hub 正在本机运行');
+          document.querySelector('#address').innerHTML = '仅本机 <code>' + status.bind_addr + '</code>';
+          text('#sessions', status.active_sessions);
+          text('#audio-connections', status.authenticated_audio_connections);
+          text('#audio-frames', status.accepted_audio_frames);
+          text('#audio-rejected', status.rejected_audio_frames);
+          text('#diagnostic-path', '日志：' + status.diagnostic_log_path);
+          text('#audio-timing', `音频欠载：${status.audio_queue_underruns}；队列溢出丢帧：${status.audio_queue_dropped_frames}；慢连接断开：${status.audio_slow_disconnects}`);
+          text('#microphone', status.microphone_active ? '物理麦克风：正在使用' : '物理麦克风：未启动');
+          text('#microphone-toggle', status.microphone_active ? '停止麦克风' : '启动麦克风');
+          const nativeHostReady = await invoke('native_host_registered');
+          text('#native-host', nativeHostReady ? '已就绪，仅允许本扩展连接' : '尚未安装；仅写入当前 Windows 用户。');
+          text('#native-host-install', nativeHostReady ? '重新安装' : '安装连接器');
+          renderPairing(status);
+        } catch (error) { text('#state', 'Hub 状态读取失败：' + String(error)); }
       }
       async function copyPairingCode(code) {
-        try {
-          await navigator.clipboard.writeText(code);
-        } catch {
-          const fallback = document.createElement('textarea');
-          fallback.value = code;
-          fallback.style.position = 'fixed';
-          fallback.style.opacity = '0';
-          document.body.append(fallback);
-          fallback.select();
-          document.execCommand('copy');
-          fallback.remove();
-        }
+        try { await navigator.clipboard.writeText(code); }
+        catch { const fallback = document.createElement('textarea'); fallback.value = code; fallback.style.position = 'fixed'; fallback.style.opacity = '0'; document.body.append(fallback); fallback.select(); document.execCommand('copy'); fallback.remove(); }
         lastCopiedPairingCode = code;
-        document.querySelector('#pairing-copy-status').textContent = `已复制确认码 ${code}`;
+        text('#pairing-copy-status', `已复制确认码 ${code}`);
       }
       function renderPairing(status) {
         const pairing = document.querySelector('#pairing');
         const copyStatus = document.querySelector('#pairing-copy-status');
         pairing.replaceChildren();
         if (status.pending_pair_codes.length) {
-          if (!status.pending_pair_codes.includes(lastCopiedPairingCode)) {
-            lastCopiedPairingCode = '';
-            copyStatus.textContent = '';
-          }
-          const prompt = document.createElement('span');
-          prompt.textContent = '将下面的六码确认码输入对应 Chrome Profile 的扩展：';
-          pairing.append(prompt);
+          if (!status.pending_pair_codes.includes(lastCopiedPairingCode)) { lastCopiedPairingCode = ''; copyStatus.textContent = ''; }
+          pairing.append('将六码确认码输入对应 Chrome Profile 的扩展：');
           for (const code of status.pending_pair_codes) {
-            const box = document.createElement('span');
-            box.className = 'pairing-code';
-            const codeElement = document.createElement('code');
-            codeElement.textContent = code;
-            const copy = document.createElement('button');
-            copy.type = 'button';
-            copy.textContent = '复制代码';
-            copy.addEventListener('click', () => copyPairingCode(code));
-            box.append(codeElement, copy);
-            pairing.append(box);
+            const box = document.createElement('span'); box.className = 'pairing-code';
+            const codeElement = document.createElement('code'); codeElement.textContent = code;
+            const copy = document.createElement('button'); copy.type = 'button'; copy.textContent = '复制'; copy.addEventListener('click', () => copyPairingCode(code));
+            box.append(codeElement, copy); pairing.append(box);
           }
           return;
         }
         copyStatus.textContent = '';
         const pairedProfiles = Number(status.paired_profiles || 0);
-        pairing.textContent = pairedProfiles
-          ? `已配对匿名 Profile：${pairedProfiles} 个。现在可在扩展中将会议页面加入频道。`
-          : '没有待确认或已配对的 Profile。';
+        pairing.textContent = pairedProfiles ? `已配对匿名 Profile：${pairedProfiles} 个。可在扩展中将会议页面加入频道。` : '没有待确认或已配对的 Profile。';
       }
-      document.querySelector('#stop').addEventListener('click', async () => { if (invoke) await invoke('stop_all_bridging'); await refresh(); });
       document.querySelector('#microphone-toggle').addEventListener('click', async () => {
         if (!invoke) return;
         const status = await invoke('hub_status');
         try { await invoke(status.microphone_active ? 'stop_microphone' : 'start_microphone'); }
-        catch (error) { document.querySelector('#state').textContent = '麦克风未启动：' + String(error); }
+        catch (error) { text('#state', '麦克风未启动：' + String(error)); }
         await refresh();
       });
       document.querySelector('#native-host-install').addEventListener('click', async () => {
         if (!invoke) return;
-        try {
-          await invoke('install_native_host');
-          document.querySelector('#state').textContent = 'Chrome 连接器已安装';
-        } catch (error) {
-          document.querySelector('#state').textContent = 'Chrome 连接器未安装：' + String(error);
-        }
+        try { await invoke('install_native_host'); text('#state', 'Chrome 连接器已安装'); }
+        catch (error) { text('#state', 'Chrome 连接器未安装：' + String(error)); }
         await refresh();
       });
-      refresh();
-      setInterval(refresh, 1000);
+      refresh(); setInterval(refresh, 1000);
     </script>
   </body>
 </html>

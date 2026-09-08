@@ -5,13 +5,13 @@ use shared_proto::{BrokerCoreMessage, HealthPong};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use uuid::Uuid;
 
+#[cfg(unix)]
 const CONTROL_SOCKET_FILE: &str = "native-control.sock";
 
 /// Per-user broker control endpoint. PCM is never carried over this socket.
 pub fn control_socket_path() -> io::Result<PathBuf> {
     #[cfg(unix)]
     {
-        // SAFETY: `geteuid` has no preconditions and only reads the current process UID.
         let uid = unsafe { libc::geteuid() };
         Ok(PathBuf::from("/tmp").join(format!("meet-bridge-hub-{uid}-{CONTROL_SOCKET_FILE}")))
     }
@@ -79,18 +79,29 @@ async fn handle_control_connection(
 }
 
 #[cfg(windows)]
-const CONTROL_PIPE_NAME: &str = r"\\.\pipe\MeetBridgeHub-Control-v1";
+pub const CONTROL_PIPE_NAME: &str = r"\\.\pipe\MeetBridgeHub-Control-v1";
 
 #[cfg(windows)]
 pub async fn serve_control_pipe(
     core_instance_id: Uuid,
     hub: crate::service::HubService,
 ) -> io::Result<()> {
-    let mut server = create_control_pipe(true)?;
+    serve_control_pipe_at(CONTROL_PIPE_NAME.to_owned(), core_instance_id, hub).await
+}
+
+/// Uses the same ACL and framing as production with an isolated test pipe name.
+#[cfg(windows)]
+#[doc(hidden)]
+pub async fn serve_control_pipe_at(
+    pipe_name: String,
+    core_instance_id: Uuid,
+    hub: crate::service::HubService,
+) -> io::Result<()> {
+    let mut server = create_control_pipe(&pipe_name, true)?;
     loop {
         server.connect().await?;
         let connected = server;
-        server = create_control_pipe(false)?;
+        server = create_control_pipe(&pipe_name, false)?;
         let connection_hub = hub.clone();
         tokio::spawn(async move {
             let _ = handle_pipe_connection(connected, core_instance_id, connection_hub).await;
@@ -100,6 +111,7 @@ pub async fn serve_control_pipe(
 
 #[cfg(windows)]
 fn create_control_pipe(
+    pipe_name: &str,
     first: bool,
 ) -> io::Result<tokio::net::windows::named_pipe::NamedPipeServer> {
     use std::mem::size_of;
@@ -132,7 +144,7 @@ fn create_control_pipe(
         .reject_remote_clients(true);
     let result = unsafe {
         options.create_with_security_attributes_raw(
-            CONTROL_PIPE_NAME,
+            pipe_name,
             (&mut attributes as *mut SECURITY_ATTRIBUTES).cast(),
         )
     };

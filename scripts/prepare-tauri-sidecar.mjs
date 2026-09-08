@@ -1,38 +1,33 @@
-#!/usr/bin/env node
-/**
- * Builds the native messaging broker for the host platform and stages it as a
- * Tauri resource. Kept platform-neutral so `cargo tauri build` works on both
- * macOS and Windows runners.
- */
-import { execFileSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { spawnSync } from "node:child_process";
 
-const scriptDirectory = dirname(fileURLToPath(import.meta.url));
-const projectRoot = dirname(scriptDirectory);
-const binaryName = process.platform === "win32"
+const scriptDir = dirname(fileURLToPath(import.meta.url));
+const projectRoot = resolve(scriptDir, "..");
+const requestedTarget = process.env.MEET_BRIDGE_TARGET_TRIPLE || process.env.CARGO_BUILD_TARGET;
+const executableName = process.platform === "win32"
   ? "meet-bridge-native-broker.exe"
   : "meet-bridge-native-broker";
-const brokerPath = join(projectRoot, "target", "release", binaryName);
-const resourceDirectory = join(
-  projectRoot,
-  "apps",
-  "tauri-app",
-  "src-tauri",
-  "resources",
-);
-const stagedPath = join(resourceDirectory, binaryName);
+const cargoArgs = ["build", "--release", "-p", "meet-bridge-native-broker"];
+if (requestedTarget) cargoArgs.push("--target", requestedTarget);
 
-execFileSync(
-  "cargo",
-  ["build", "--release", "-p", "meet-bridge-native-broker"],
-  { cwd: projectRoot, stdio: "inherit" },
-);
+const cargo = process.env.CARGO || "cargo";
+const build = spawnSync(cargo, cargoArgs, {
+  cwd: projectRoot,
+  stdio: "inherit",
+  shell: false,
+});
+if (build.error) throw build.error;
+if (build.status !== 0) process.exit(build.status ?? 1);
 
+const brokerPath = requestedTarget
+  ? join(projectRoot, "target", requestedTarget, "release", executableName)
+  : join(projectRoot, "target", "release", executableName);
 if (!existsSync(brokerPath)) {
   throw new Error(`Native Broker build did not produce an executable: ${brokerPath}`);
 }
 
-mkdirSync(resourceDirectory, { recursive: true });
-copyFileSync(brokerPath, stagedPath);
+const resourceDir = join(projectRoot, "apps", "tauri-app", "src-tauri", "resources");
+mkdirSync(resourceDir, { recursive: true });
+copyFileSync(brokerPath, join(resourceDir, executableName));

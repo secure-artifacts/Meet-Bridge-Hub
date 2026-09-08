@@ -1,4 +1,5 @@
 use std::io;
+#[cfg(unix)]
 use std::path::PathBuf;
 
 use shared_proto::{
@@ -10,7 +11,6 @@ use uuid::Uuid;
 
 #[cfg(unix)]
 fn control_socket_path() -> PathBuf {
-    // SAFETY: `geteuid` has no preconditions and only reads the current process UID.
     let uid = unsafe { libc::geteuid() };
     PathBuf::from("/tmp").join(format!("meet-bridge-hub-{uid}-native-control.sock"))
 }

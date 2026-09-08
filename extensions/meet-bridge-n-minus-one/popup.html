@@ -18,69 +18,49 @@
 
       <section class="card channel-card">
         <div class="section-heading">
-          <h2>音频频道</h2>
+          <div class="channel-heading-copy"><h2>音频频道</h2><span class="channel-note">仅控制个人音频，不影响他人交流</span></div>
           <span id="channelRouteSummary" class="count">0 路</span>
         </div>
-        <div class="channel-tabs" role="tablist" aria-label="选择音频频道">
-          <button class="channel-tab active" data-channel-id="1" role="tab">
-            <span class="channel-index">1</span>
-            <span class="channel-tab-copy">
-              <strong id="channelTabName1">频道 1</strong>
-              <small id="channelTabCount1">0 路</small>
-            </span>
-          </button>
-          <button class="channel-tab" data-channel-id="2" role="tab">
-            <span class="channel-index">2</span>
-            <span class="channel-tab-copy">
-              <strong id="channelTabName2">频道 2</strong>
-              <small id="channelTabCount2">0 路</small>
-            </span>
-          </button>
-          <button class="channel-tab" data-channel-id="3" role="tab">
-            <span class="channel-index">3</span>
-            <span class="channel-tab-copy">
-              <strong id="channelTabName3">频道 3</strong>
-              <small id="channelTabCount3">0 路</small>
-            </span>
-          </button>
-        </div>
-        <div class="channel-toolbar">
-          <input id="channelName" maxlength="18" aria-label="当前频道名称" />
-          <button id="renameChannel" class="quiet">改名</button>
-        </div>
-        <div class="channel-control-row">
-          <div>
-            <p id="channelVoiceState" class="channel-voice-state">本频道可以听见你</p>
-            <p id="channelHint" class="muted small">频道间数字音频完全隔离。</p>
+        <div class="channel-tabs" role="tablist" aria-label="选择音频频道；双击频道名称可改名">
+          <div class="channel-tile channel-primary">
+            <button class="channel-tab active" data-channel-id="1" role="tab" title="点击选择；双击改名">
+              <span class="channel-index">1</span><span class="channel-tab-copy"><strong id="channelTabName1">频道 1</strong><small id="channelTabCount1">0 路</small></span>
+            </button>
+            <div class="channel-icon-actions">
+              <button class="channel-mic" data-channel-mic="1" aria-label="关闭频道 1 麦克风" title="频道 1 麦克风"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 14a3 3 0 0 0 3-3V6a3 3 0 1 0-6 0v5a3 3 0 0 0 3 3Z M19 11a7 7 0 0 1-14 0 M12 18v3 M8 21h8" /></svg></button>
+              <button class="channel-speaker" data-channel-monitor="1" aria-label="关闭频道 1 扬声器" title="频道 1 扬声器"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9v6h4l5 4V5L8 9H4Zm12.5-.8a5 5 0 0 1 0 7.6M19 5.5a9 9 0 0 1 0 13" /></svg></button>
+            </div>
+          </div>
+          <div class="channel-side">
+            <div class="channel-tile">
+              <button class="channel-tab" data-channel-id="2" role="tab" title="点击选择；双击改名"><span class="channel-index">2</span><span class="channel-tab-copy"><strong id="channelTabName2">频道 2</strong><small id="channelTabCount2">0 路</small></span></button>
+              <div class="channel-icon-actions"><button class="channel-mic" data-channel-mic="2" aria-label="关闭频道 2 麦克风" title="频道 2 麦克风"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 14a3 3 0 0 0 3-3V6a3 3 0 1 0-6 0v5a3 3 0 0 0 3 3Z M19 11a7 7 0 0 1-14 0 M12 18v3 M8 21h8" /></svg></button><button class="channel-speaker" data-channel-monitor="2" aria-label="关闭频道 2 扬声器" title="频道 2 扬声器"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9v6h4l5 4V5L8 9H4Zm12.5-.8a5 5 0 0 1 0 7.6M19 5.5a9 9 0 0 1 0 13" /></svg></button></div>
+            </div>
+            <div class="channel-tile">
+              <button class="channel-tab" data-channel-id="3" role="tab" title="点击选择；双击改名"><span class="channel-index">3</span><span class="channel-tab-copy"><strong id="channelTabName3">频道 3</strong><small id="channelTabCount3">0 路</small></span></button>
+              <div class="channel-icon-actions"><button class="channel-mic" data-channel-mic="3" aria-label="关闭频道 3 麦克风" title="频道 3 麦克风"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 14a3 3 0 0 0 3-3V6a3 3 0 1 0-6 0v5a3 3 0 0 0 3 3Z M19 11a7 7 0 0 1-14 0 M12 18v3 M8 21h8" /></svg></button><button class="channel-speaker" data-channel-monitor="3" aria-label="关闭频道 3 扬声器" title="频道 3 扬声器"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9v6h4l5 4V5L8 9H4Zm12.5-.8a5 5 0 0 1 0 7.6M19 5.5a9 9 0 0 1 0 13" /></svg></button></div>
+            </div>
           </div>
         </div>
-        <div class="channel-audio-actions">
-          <button id="toggleChannelMute" class="talk-stop">本频道静音</button>
-          <button id="toggleChannelMonitor" class="monitor-on">本地监听中</button>
-        </div>
-        <button id="stopChannel" class="channel-stop" disabled>停止当前频道</button>
-      </section>
-
-      <section class="card talk-card">
-        <div class="control-heading">
-          <div>
-            <h2>本人声音总开关</h2>
-            <p id="selfVoiceState" class="control-state">全部频道可以发言</p>
+        <div class="global-audio-controls" aria-label="全局音频控制">
+          <div class="global-control-line">
+            <button id="toggleSelfMute" class="talk-stop" title="总开关：接收我的声音"><span class="global-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 14a3 3 0 0 0 3-3V6a3 3 0 1 0-6 0v5a3 3 0 0 0 3 3Z M19 11a7 7 0 0 1-14 0 M12 18v3 M8 21h8" /></svg></span><span class="global-control-label">总开关（接收我的声音）</span></button>
+            <p id="channelVoiceState" class="channel-voice-state">所有频道不接收我的声音</p>
           </div>
-          <button id="toggleSelfMute" class="talk-stop">全部频道静音</button>
+          <div class="global-control-line">
+            <button id="toggleAllMonitor" class="monitor-on" title="总开关：向我播放声音"><span class="global-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9v6h4l5 4V5L8 9H4Zm12.5-.8a5 5 0 0 1 0 7.6M19 5.5a9 9 0 0 1 0 13" /></svg></span><span class="global-control-label">总开关（向我播放声音）</span></button>
+            <p id="channelHint" class="channel-listen-state">所有频道不向我播放声音</p>
+          </div>
         </div>
-        <p id="selfVoiceHint" class="muted small">
-          只控制你的物理麦克风，不会停止会议之间的转发。
-        </p>
       </section>
 
       <section class="card compact hub-card">
         <div class="section-heading">
-          <h2>跨 Profile Hub（实验功能）</h2>
+          <h2>跨 Profile Hub</h2>
           <span id="hubState" class="count">关闭</span>
         </div>
         <p class="muted small">
-          仅在安装并启动 Meet Bridge Hub 后启用。关闭时保持原有单 Profile N-1 路径不变。
+          用于在不同 Chrome Profile 之间共享会议音频。关闭后保持原有单 Profile 混音不变。
         </p>
         <button id="toggleHub" class="secondary">启用跨 Profile Hub</button>
         <div id="hubPairingForm" class="hub-pairing" hidden>
@@ -110,7 +90,7 @@
         </div>
       </section>
 
-      <section class="card">
+      <section class="card mixing-card">
         <div class="section-heading">
           <h2 id="routeHeading">当前频道的标签页</h2>
           <span id="routeCount" class="count">0</span>
@@ -118,7 +98,7 @@
         <div id="routeList" class="list empty">尚未加入会议</div>
       </section>
 
-      <section class="card compact">
+      <section class="card compact eligible-card">
         <div class="section-heading">
           <h2>其他可加入标签页</h2>
         </div>

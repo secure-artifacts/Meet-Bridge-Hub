@@ -20,6 +20,34 @@ const CUSTOM_CONTENT_SCRIPT_IDS = [
   "meet-bridge-custom-isolated",
   "meet-bridge-custom-main",
 ];
+const HUB_ENDPOINT_STORAGE_KEY = "hubEndpointIdsV1";
+const hubRouteRestores = new Map();
+
+async function getHubEndpointId(tabId) {
+  const key = String(Number(tabId));
+  const stored = await chrome.storage.session.get(HUB_ENDPOINT_STORAGE_KEY);
+  const endpoints = stored[HUB_ENDPOINT_STORAGE_KEY] || {};
+  if (typeof endpoints[key] === "string" && /^[0-9a-f-]{36}$/i.test(endpoints[key])) {
+    return endpoints[key];
+  }
+  const endpointId = crypto.randomUUID();
+  endpoints[key] = endpointId;
+  await chrome.storage.session.set({ [HUB_ENDPOINT_STORAGE_KEY]: endpoints });
+  return endpointId;
+}
+
+async function forgetHubEndpointId(tabId) {
+  const key = String(Number(tabId));
+  const stored = await chrome.storage.session.get(HUB_ENDPOINT_STORAGE_KEY);
+  const endpoints = stored[HUB_ENDPOINT_STORAGE_KEY] || {};
+  if (!(key in endpoints)) return;
+  delete endpoints[key];
+  await chrome.storage.session.set({ [HUB_ENDPOINT_STORAGE_KEY]: endpoints });
+}
+
+async function clearHubEndpointIds() {
+  await chrome.storage.session.remove(HUB_ENDPOINT_STORAGE_KEY);
+}
 let diagnosticEntries = [];
 let diagnosticEnabledUntil = 0;
 let diagnosticSessionLoaded = false;
@@ -134,8 +162,11 @@ function defaultChannelConfig() {
   return {
     selected: 1,
     names: { 1: "频道 1", 2: "频道 2", 3: "频道 3" },
-    micMuted: { 1: false, 2: false, 3: false },
+    // New installations start muted. The user explicitly enables a channel
+    // before its physical microphone can enter a meeting mix.
+    micMuted: { 1: true, 2: true, 3: true },
     monitorMuted: { 1: false, 2: false, 3: false },
+    monitorAllMuted: false,
   };
 }
 
@@ -146,13 +177,20 @@ async function getChannelConfig() {
   if (!saved || typeof saved !== "object") return defaults;
   const names = { ...defaults.names };
   const micMuted = { ...defaults.micMuted };
+  const monitorAllMuted =
+    typeof saved.monitorAllMuted === "boolean"
+      ? saved.monitorAllMuted
+      : [1, 2, 3].every((id) => Boolean(saved.monitorMuted?.[id]));
   const monitorMuted = { ...defaults.monitorMuted };
   for (const id of [1, 2, 3]) {
     const name = saved.names?.[id];
     if (typeof name === "string" && name.trim()) {
       names[id] = name.trim().slice(0, 18);
     }
-    micMuted[id] = Boolean(saved.micMuted?.[id]);
+    micMuted[id] =
+      typeof saved.micMuted?.[id] === "boolean"
+        ? saved.micMuted[id]
+        : defaults.micMuted[id];
     monitorMuted[id] = Boolean(saved.monitorMuted?.[id]);
   }
   return {
@@ -160,6 +198,7 @@ async function getChannelConfig() {
     names,
     micMuted,
     monitorMuted,
+    monitorAllMuted,
   };
 }
 
@@ -212,6 +251,9 @@ async function setChannelMonitorMuted(channelId, muted) {
   const config = await getChannelConfig();
   const previous = Boolean(config.monitorMuted[id]);
   config.monitorMuted[id] = Boolean(muted);
+  config.monitorAllMuted = [1, 2, 3].every((channelId) =>
+    Boolean(config.monitorMuted[channelId]),
+  );
   await storeChannelConfig(config);
   try {
     if (await hasOffscreenDocument()) {
@@ -224,6 +266,31 @@ async function setChannelMonitorMuted(channelId, muted) {
     return { ok: true, channelId: id, muted: config.monitorMuted[id] };
   } catch (error) {
     config.monitorMuted[id] = previous;
+    await storeChannelConfig(config);
+    throw error;
+  }
+}
+
+async function setAllMonitorMuted(muted) {
+  const config = await getChannelConfig();
+  const previous = {
+    monitorAllMuted: config.monitorAllMuted,
+    monitorMuted: { ...config.monitorMuted },
+  };
+  config.monitorAllMuted = Boolean(muted);
+  for (const id of [1, 2, 3]) config.monitorMuted[id] = config.monitorAllMuted;
+  await storeChannelConfig(config);
+  try {
+    if (await hasOffscreenDocument()) {
+      const result = await askOffscreen("SET_CHANNEL_MONITOR_STATES", {
+        states: config.monitorMuted,
+      });
+      if (!result?.ok) throw new Error(result?.error || "会议收听状态切换失败。");
+    }
+    return { ok: true, muted: config.monitorAllMuted };
+  } catch (error) {
+    config.monitorAllMuted = previous.monitorAllMuted;
+    config.monitorMuted = previous.monitorMuted;
     await storeChannelConfig(config);
     throw error;
   }
@@ -825,7 +892,7 @@ async function addTab(tab, { focusTarget = false, channelId = null } = {}) {
   const hubStatus = await MeetBridgeHubLink.getStatus();
   if (hubStatus.enabled && hubStatus.state === "connected") {
     try {
-      const endpointId = crypto.randomUUID();
+      const endpointId = await getHubEndpointId(tab.id);
       const grant = await MeetBridgeHubLink.requestSession(endpointId, targetChannelId);
       const hubRoute = await askOffscreen("SET_HUB_SESSION", { tabId: tab.id, endpointId, grant });
       if (!hubRoute?.ok) throw new Error(hubRoute?.error || "Hub 音频路由未建立。");
@@ -902,37 +969,92 @@ async function stopAll() {
     await askOffscreen("STOP_ALL");
     await chrome.offscreen.closeDocument();
   }
+  await clearHubEndpointIds();
   await setDiagnosticsEnabled(false);
   return { ok: true };
 }
 
-async function restoreHubRoute(tabId, channelId = null) {
+async function setHubEnabledForExistingRoutes(enabled) {
+  const status = await MeetBridgeHubLink.setEnabled(enabled);
   const bridge = await getBridgeState();
-  const route = bridge.tabs?.find((item) => item.tabId === Number(tabId));
-  if (!route) return { ok: true, missing: true };
-  const targetChannelId = normalizeChannelId(channelId ?? route.channelId);
-  const hubStatus = await MeetBridgeHubLink.getStatus();
-  if (hubStatus.enabled) await MeetBridgeHubLink.connect();
-  const connected = (await MeetBridgeHubLink.getStatus()).state === "connected";
-  if (connected) {
-    try {
-      const endpointId = crypto.randomUUID();
-      const grant = await MeetBridgeHubLink.requestSession(endpointId, targetChannelId);
-      return askOffscreen("SET_HUB_SESSION", { tabId: route.tabId, endpointId, grant });
-    } catch (error) {
-      appendDiagnostic({ event: "hub-route-reconnect-failed", detail: { code: error?.name || "HUB_RECONNECT_ERROR" } }).catch(() => {});
+  const routes = bridge.tabs || [];
+  if (!enabled) {
+    for (const route of routes) {
+      await askOffscreen("CLEAR_HUB_SESSION", { tabId: route.tabId }).catch(() => {});
     }
+    await clearHubEndpointIds();
+    return { ...status, audioRoutesRequested: 0 };
   }
-  await askOffscreen("CLEAR_HUB_SESSION", { tabId: route.tabId });
-  if (route.role === "meeting") {
-    const microphone = await askOffscreen("ENSURE_MICROPHONE", { deviceId: await getMicrophoneDeviceId() });
-    if (!microphone?.ok) {
-      appendDiagnostic({ event: "hub-route-local-fallback-unavailable", detail: { code: microphone?.code || "MICROPHONE_ERROR" } }).catch(() => {});
-    }
+
+  // A first-time Profile still needs the explicit confirmation. A previously
+  // paired Profile has no challenge and can attach every existing route now.
+  if (status.state !== "connected" || status.pairingCode) {
+    return { ...status, audioRoutesRequested: 0 };
   }
-  return { ok: false, recoveredLocally: true };
+  const results = [];
+  for (const route of routes) {
+    results.push(await restoreHubRoute(route.tabId, route.channelId));
+  }
+  return {
+    ...status,
+    audioRoutesRequested: routes.length,
+    audioRoutesReady: results.filter((result) => result?.ok).length,
+  };
 }
 
+async function confirmHubPairingForExistingRoutes(confirmationCode) {
+  const status = await MeetBridgeHubLink.confirmPairing(confirmationCode);
+  const bridge = await getBridgeState();
+  const results = [];
+  for (const route of bridge.tabs || []) {
+    results.push(await restoreHubRoute(route.tabId, route.channelId));
+  }
+  return {
+    ...status,
+    audioRoutesRequested: results.length,
+    audioRoutesReady: results.filter((result) => result?.ok).length,
+  };
+}
+async function restoreHubRoute(tabId, channelId = null) {
+  const key = String(Number(tabId));
+  if (hubRouteRestores.has(key)) return hubRouteRestores.get(key);
+  const task = (async () => {
+    const bridge = await getBridgeState();
+    const route = bridge.tabs?.find((item) => item.tabId === Number(tabId));
+    if (!route) return { ok: true, missing: true };
+    const targetChannelId = normalizeChannelId(channelId ?? route.channelId);
+    const hubStatus = await MeetBridgeHubLink.getStatus();
+    if (hubStatus.enabled) await MeetBridgeHubLink.connect();
+    const connected = (await MeetBridgeHubLink.getStatus()).state === "connected";
+    if (connected) {
+      try {
+        // Close the old socket before asking the Hub for a replacement. This
+        // prevents a transient third endpoint from being mixed during retries.
+        await askOffscreen("CLEAR_HUB_SESSION", { tabId: route.tabId });
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        const endpointId = await getHubEndpointId(route.tabId);
+        const grant = await MeetBridgeHubLink.requestSession(endpointId, targetChannelId);
+        return askOffscreen("SET_HUB_SESSION", { tabId: route.tabId, endpointId, grant });
+      } catch (error) {
+        appendDiagnostic({ event: "hub-route-reconnect-failed", detail: { code: error?.name || "HUB_RECONNECT_ERROR" } }).catch(() => {});
+      }
+    }
+    await askOffscreen("CLEAR_HUB_SESSION", { tabId: route.tabId });
+    if (route.role === "meeting") {
+      const microphone = await askOffscreen("ENSURE_MICROPHONE", { deviceId: await getMicrophoneDeviceId() });
+      if (!microphone?.ok) {
+        appendDiagnostic({ event: "hub-route-local-fallback-unavailable", detail: { code: microphone?.code || "MICROPHONE_ERROR" } }).catch(() => {});
+      }
+    }
+    return { ok: false, recoveredLocally: true };
+  })();
+  hubRouteRestores.set(key, task);
+  try {
+    return await task;
+  } finally {
+    if (hubRouteRestores.get(key) === task) hubRouteRestores.delete(key);
+  }
+}
 async function sendToTab(tabId, message) {
   try {
     await chrome.tabs.sendMessage(tabId, message, { frameId: 0 });
@@ -957,10 +1079,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         return MeetBridgeHubLink.getStatus();
 
       case "SET_HUB_ENABLED":
-        return MeetBridgeHubLink.setEnabled(Boolean(message.enabled));
+        return setHubEnabledForExistingRoutes(Boolean(message.enabled));
 
       case "CONFIRM_HUB_PAIRING":
-        return MeetBridgeHubLink.confirmPairing(message.confirmationCode);
+        return confirmHubPairingForExistingRoutes(message.confirmationCode);
 
       case "REQUEST_HUB_SESSION":
         return MeetBridgeHubLink.requestSession(message.endpointId, normalizeChannelId(message.channelId));
@@ -1019,6 +1141,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
       case "SET_CHANNEL_MONITOR_MUTED":
         return setChannelMonitorMuted(message.channelId, message.muted);
+
+      case "SET_ALL_MONITOR_MUTED":
+        return setAllMonitorMuted(message.muted);
 
       case "MOVE_TAB_CHANNEL":
         return moveTabToChannel(Number(message.tabId), message.channelId);
@@ -1192,6 +1317,7 @@ chrome.commands.onCommand.addListener((command, tab) => {
 });
 
 chrome.tabs.onRemoved.addListener(async (tabId) => {
+  await forgetHubEndpointId(tabId);
   if (await hasOffscreenDocument()) {
     await askOffscreen("REMOVE_TAB", { tabId }).catch(() => {});
   }

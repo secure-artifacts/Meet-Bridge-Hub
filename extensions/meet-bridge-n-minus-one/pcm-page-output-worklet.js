@@ -21,7 +21,7 @@ class MeetBridgePcmPageOutputProcessor extends AudioWorkletProcessor {
       const samples = new Int16Array(buffer, 8);
       this.chunks.push(samples);
       this.queuedFrames += samples.length;
-      if (this.queuedFrames > 48000) this.discard(this.queuedFrames - 9600);
+      if (this.queuedFrames > 28800) this.discard(this.queuedFrames - 14400);
     };
   }
 
@@ -45,11 +45,11 @@ class MeetBridgePcmPageOutputProcessor extends AudioWorkletProcessor {
     const output = outputs[0]?.[0];
     if (!output) return true;
 
-    if (!this.started && this.queuedFrames < 3840) {
+    if (!this.started && this.queuedFrames < 7680) {
       output.fill(0);
     } else {
       this.started = true;
-      if (this.queuedFrames > 14400) this.discard(this.queuedFrames - 9600);
+      if (this.queuedFrames > 19200) this.discard(this.queuedFrames - 14400);
       let sum = 0;
       for (let index = 0; index < output.length; index += 1) {
         let sample = 0;

@@ -8,6 +8,7 @@ let hubConnectionState = "disabled";
 let hubLastError = "";
 let hubPairChallenge = null;
 const hubPendingRequests = new Map();
+let hubConnectPromise = null;
 
 function notifyHubStateChanged() {
   chrome.runtime
@@ -59,62 +60,90 @@ async function connectHub() {
     return getHubStatus();
   }
 
-  if (hubPort) return getHubStatus();
-  try {
-    const profileId = await getAnonymousProfileId();
-    const port = chrome.runtime.connectNative(HUB_NATIVE_HOST_NAME);
-    port.onDisconnect.addListener(() => {
-      const error = chrome.runtime.lastError?.message || "Hub 已断开";
-      hubPort = null;
-      hubConnectionState = "disconnected";
-      hubLastError = error;
-      rejectPendingHubRequests(new Error(error));
-      notifyHubStateChanged();
-    });
-    port.onMessage.addListener((message) => {
-      hubConnectionState = "connected";
-      hubLastError = "";
-      if (message?.type === "PairChallenge" && message.payload?.confirmation_code) {
-        hubPairChallenge = message.payload;
-        notifyHubStateChanged();
-      }
-      if (message?.type === "PairResult" && message.payload?.paired) {
-        hubPairChallenge = null;
-        notifyHubStateChanged();
-      }
-      const requestId = message?.payload?.request_id;
-      const pending = requestId ? hubPendingRequests.get(requestId) : null;
-      if (pending) {
-        hubPendingRequests.delete(requestId);
-        clearTimeout(pending.timeout);
-        pending.resolve(message);
-      }
-    });
-    hubPort = port;
-    hubConnectionState = "connecting";
-    port.postMessage({
-      type: "Hello",
-      payload: {
-        request_id: crypto.randomUUID(),
-        profile_id: profileId,
-        profile_public_key_b64: "",
-        extension_version: chrome.runtime.getManifest().version,
-        protocol: {
-          minimum: { major: 1, minor: 0 },
-          maximum: { major: 1, minor: 0 },
-        },
-        client_nonce_b64: crypto.randomUUID(),
-        capabilities: ["TabCapturePcm", "ReceiveHubMix", "ChannelRouting"],
-      },
-    });
-  } catch (error) {
-    closeHubPort();
-    hubConnectionState = "error";
-    hubLastError = error?.message || String(error);
-  }
-  return getHubStatus();
-}
+  // The first Hello response is the actual readiness signal. Returning before
+  // it arrives races SessionRequest and makes a first click look paired while
+  // no endpoint has yet been authorized.
+  if (hubPort) return hubConnectPromise || getHubStatus();
 
+  const connectTask = (async () => {
+    let port = null;
+    try {
+      const profileId = await getAnonymousProfileId();
+      port = chrome.runtime.connectNative(HUB_NATIVE_HOST_NAME);
+      port.onDisconnect.addListener(() => {
+        if (hubPort !== port) return;
+        const error = chrome.runtime.lastError?.message || "Hub 已断开";
+        hubPort = null;
+        hubConnectPromise = null;
+        hubConnectionState = "disconnected";
+        hubLastError = error;
+        rejectPendingHubRequests(new Error(error));
+        notifyHubStateChanged();
+      });
+      port.onMessage.addListener((message) => {
+        if (hubPort !== port) return;
+        if (message?.type === "Error") {
+          hubConnectionState = "error";
+          hubLastError = message.payload?.action_required || "Hub 拒绝了请求。";
+        } else {
+          hubConnectionState = "connected";
+          hubLastError = "";
+        }
+        if (message?.type === "PairChallenge" && message.payload?.confirmation_code) {
+          hubPairChallenge = message.payload;
+          notifyHubStateChanged();
+        }
+        if (message?.type === "PairResult" && message.payload?.paired) {
+          hubPairChallenge = null;
+          notifyHubStateChanged();
+        }
+        const requestId = message?.payload?.request_id;
+        const pending = requestId ? hubPendingRequests.get(requestId) : null;
+        if (pending) {
+          hubPendingRequests.delete(requestId);
+          clearTimeout(pending.timeout);
+          pending.resolve(message);
+        }
+      });
+      hubPort = port;
+      hubConnectionState = "connecting";
+      hubLastError = "";
+      const hello = await sendHubRequest({
+        type: "Hello",
+        payload: {
+          request_id: crypto.randomUUID(),
+          profile_id: profileId,
+          profile_public_key_b64: "",
+          extension_version: chrome.runtime.getManifest().version,
+          protocol: {
+            minimum: { major: 1, minor: 0 },
+            maximum: { major: 1, minor: 0 },
+          },
+          client_nonce_b64: crypto.randomUUID(),
+          capabilities: ["TabCapturePcm", "ReceiveHubMix", "ChannelRouting"],
+        },
+      });
+      if (hello?.type === "Error") {
+        throw new Error(hello.payload?.action_required || "Hub 拒绝连接。");
+      }
+      if (hubConnectionState !== "connected") {
+        throw new Error("Hub 未确认连接就绪。");
+      }
+    } catch (error) {
+      if (hubPort === port) closeHubPort();
+      hubConnectionState = "error";
+      hubLastError = error?.message || String(error);
+    }
+    notifyHubStateChanged();
+    return getHubStatus();
+  })();
+  hubConnectPromise = connectTask;
+  try {
+    return await connectTask;
+  } finally {
+    if (hubConnectPromise === connectTask) hubConnectPromise = null;
+  }
+}
 function sendHubRequest(message) {
   if (!hubPort) return Promise.reject(new Error("Meet Bridge Hub 未连接。"));
   const requestId = message.payload?.request_id;

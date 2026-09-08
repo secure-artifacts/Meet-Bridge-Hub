@@ -1,7 +1,12 @@
 use hub_core::{HubConfig, HubService, HubStatus};
 use tauri::State;
 
+#[cfg(target_os = "windows")]
+mod windows_native_host;
+
+#[cfg(target_os = "macos")]
 const NATIVE_HOST_NAME: &str = "com.meetbridge.hub";
+#[cfg(target_os = "macos")]
 const EXTENSION_ORIGIN: &str = "chrome-extension://ancoaojdjchmllenalcmmkgndahancgp/";
 
 #[cfg(target_os = "macos")]
@@ -58,7 +63,13 @@ fn native_host_registered() -> Result<bool, String> {
     )
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "windows")]
+#[tauri::command]
+fn native_host_registered() -> Result<bool, String> {
+    windows_native_host::is_registered()
+}
+
+#[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
 #[tauri::command]
 fn native_host_registered() -> Result<bool, String> {
     Ok(false)
@@ -97,10 +108,28 @@ fn install_native_host() -> Result<(), String> {
     Ok(())
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "windows")]
+#[tauri::command]
+fn install_native_host() -> Result<(), String> {
+    windows_native_host::install()
+}
+
+#[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
 #[tauri::command]
 fn install_native_host() -> Result<(), String> {
     Err("Native Host installation has not been implemented for this platform.".to_string())
+}
+
+#[cfg(target_os = "windows")]
+#[tauri::command]
+fn uninstall_native_host() -> Result<bool, String> {
+    windows_native_host::uninstall()
+}
+
+#[cfg(not(target_os = "windows"))]
+#[tauri::command]
+fn uninstall_native_host() -> Result<bool, String> {
+    Err("Native Host removal has not been implemented for this platform.".to_string())
 }
 
 #[tauri::command]
@@ -143,7 +172,8 @@ fn main() {
             start_microphone,
             stop_microphone,
             native_host_registered,
-            install_native_host
+            install_native_host,
+            uninstall_native_host
         ])
         .run(tauri::generate_context!())
         .unwrap_or_else(|error| panic!("failed to run Meet Bridge Hub: {error}"));
