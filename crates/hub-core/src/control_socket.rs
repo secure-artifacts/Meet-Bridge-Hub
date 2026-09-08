@@ -12,6 +12,7 @@ const CONTROL_SOCKET_FILE: &str = "native-control.sock";
 pub fn control_socket_path() -> io::Result<PathBuf> {
     #[cfg(unix)]
     {
+        // SAFETY: geteuid has no preconditions and reads only the current process credentials.
         let uid = unsafe { libc::geteuid() };
         Ok(PathBuf::from("/tmp").join(format!("meet-bridge-hub-{uid}-{CONTROL_SOCKET_FILE}")))
     }

@@ -71,19 +71,19 @@ impl MicrophoneCapture {
         let error_callback = |_error| {};
         let stream = match sample_format {
             SampleFormat::F32 => device.build_input_stream(
-                config.clone(),
+                config,
                 move |data: &[f32], _| push_downmixed(data, channels, &mut producer),
                 error_callback,
                 None,
             ),
             SampleFormat::I16 => device.build_input_stream(
-                config.clone(),
+                config,
                 move |data: &[i16], _| push_downmixed_i16(data, channels, &mut producer),
                 error_callback,
                 None,
             ),
             SampleFormat::U16 => device.build_input_stream(
-                config.clone(),
+                config,
                 move |data: &[u16], _| push_downmixed_u16(data, channels, &mut producer),
                 error_callback,
                 None,

@@ -1,3 +1,5 @@
+#![allow(clippy::chunks_exact_to_as_chunks, clippy::unwrap_used)]
+
 use futures_util::{SinkExt, StreamExt};
 use meet_bridge_hub_core::{HubConfig, HubService, PCM_FRAME_SAMPLES};
 use shared_proto::{AUDIO_HEADER_LENGTH, AUDIO_MAGIC, AudioFrameHeader, ChannelId, audio_flags};

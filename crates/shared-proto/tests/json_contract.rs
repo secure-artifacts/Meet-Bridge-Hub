@@ -1,3 +1,5 @@
+#![allow(clippy::expect_used, clippy::unwrap_used)]
+
 use meet_bridge_shared_proto::*;
 use uuid::Uuid;
 

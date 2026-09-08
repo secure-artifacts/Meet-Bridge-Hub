@@ -1,3 +1,5 @@
+#![allow(clippy::unwrap_used)]
+
 use meet_bridge_hub_core::control_socket_path;
 
 #[test]

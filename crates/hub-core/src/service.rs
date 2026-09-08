@@ -699,7 +699,7 @@ fn microphone_matrix() -> ClockedMixer {
         ChannelId::CHANNEL_2,
         ChannelId::CHANNEL_3,
     ] {
-        let _ = matrix.register(MixEndpoint {
+        matrix.register(MixEndpoint {
             endpoint_id: Uuid::nil(),
             channel_id,
         });
@@ -713,8 +713,12 @@ fn decode_pcm(frame: &[u8]) -> Option<[f32; PCM_FRAME_SAMPLES]> {
         return None;
     }
     let mut samples = [0.0_f32; PCM_FRAME_SAMPLES];
-    for (sample, bytes) in samples.iter_mut().zip(payload.chunks_exact(4)) {
-        *sample = f32::from_le_bytes(bytes.try_into().ok()?);
+    let (chunks, remainder) = payload.as_chunks::<4>();
+    if !remainder.is_empty() {
+        return None;
+    }
+    for (sample, bytes) in samples.iter_mut().zip(chunks) {
+        *sample = f32::from_le_bytes(*bytes);
     }
     Some(samples)
 }

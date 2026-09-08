@@ -1,3 +1,5 @@
+#![allow(clippy::unwrap_used)]
+
 use meet_bridge_hub_core::{HubConfig, HubService, PCM_FRAME_SAMPLES};
 use shared_proto::ChannelId;
 use uuid::Uuid;

@@ -11,6 +11,7 @@ use uuid::Uuid;
 
 #[cfg(unix)]
 fn control_socket_path() -> PathBuf {
+    // SAFETY: geteuid has no preconditions and reads only the current process credentials.
     let uid = unsafe { libc::geteuid() };
     PathBuf::from("/tmp").join(format!("meet-bridge-hub-{uid}-native-control.sock"))
 }

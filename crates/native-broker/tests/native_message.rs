@@ -1,3 +1,5 @@
+#![allow(clippy::unwrap_used)]
+
 use std::io::Cursor;
 
 use meet_bridge_native_broker::{

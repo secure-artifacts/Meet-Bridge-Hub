@@ -74,9 +74,13 @@ impl AudioFrameHeader {
         profile_id.copy_from_slice(&slice[12..28]);
         let mut endpoint_id = [0u8; 16];
         endpoint_id.copy_from_slice(&slice[28..44]);
-        let epoch = u64::from_le_bytes(slice[44..52].try_into().unwrap());
-        let sequence = u64::from_le_bytes(slice[52..60].try_into().unwrap());
-        let payload_length = u32::from_le_bytes(slice[60..64].try_into().unwrap());
+        let epoch = u64::from_le_bytes([
+            slice[44], slice[45], slice[46], slice[47], slice[48], slice[49], slice[50], slice[51],
+        ]);
+        let sequence = u64::from_le_bytes([
+            slice[52], slice[53], slice[54], slice[55], slice[56], slice[57], slice[58], slice[59],
+        ]);
+        let payload_length = u32::from_le_bytes([slice[60], slice[61], slice[62], slice[63]]);
 
         Ok(Self {
             magic,
