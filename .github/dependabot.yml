@@ -1,0 +1,11 @@
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: "/"
+    schedule:
+      interval: weekly
+    # glib is pulled only by the Linux GTK dependency graph. The current
+    # Tauri/GTK chain resolves to glib 0.18.x and cannot accept 0.20.x yet;
+    # macOS and Windows release targets do not include this dependency.
+    ignore:
+      - dependency-name: glib
