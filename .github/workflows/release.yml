@@ -39,18 +39,20 @@ jobs:
           mkdir -p release-assets
           dmg=$(find target/release/bundle/dmg -maxdepth 1 -name '*.dmg' -print -quit)
           test -n "$dmg"
-          cp "$dmg" release-assets/
+          asset="release-assets/Meet-Bridge-Hub-macos-${GITHUB_REF_NAME}.zip"
+          ditto -c -k --sequesterRsrc --keepParent "$dmg" "$asset"
+          test -s "$asset"
 
-      # The exact DMG uploaded below is the subject of this attestation.
+      # The exact ZIP uploaded below is the subject of this attestation.
       - name: Attest macOS release asset
         uses: actions/attest-build-provenance@v2
         with:
-          subject-path: 'release-assets/*.dmg'
+          subject-path: 'release-assets/*.zip'
 
       - name: Create Release and upload macOS asset
         uses: softprops/action-gh-release@v2
         with:
-          files: release-assets/*.dmg
+          files: release-assets/*.zip
           generate_release_notes: true
 
   windows:
@@ -80,16 +82,18 @@ jobs:
           New-Item -ItemType Directory -Force release-assets | Out-Null
           $assets = Get-ChildItem target/release/bundle -Recurse -File -Include *.msi,*.exe
           if ($assets.Count -eq 0) { throw 'No Windows installer was produced.' }
-          $assets | Copy-Item -Destination release-assets
+          $asset = "release-assets/Meet-Bridge-Hub-windows-$env:GITHUB_REF_NAME.zip"
+          Compress-Archive -Path $assets.FullName -DestinationPath $asset
+          if (-not (Test-Path $asset) -or (Get-Item $asset).Length -eq 0) { throw 'Windows release ZIP was not produced.' }
 
-      # These are the exact MSI/NSIS files uploaded by the next step.
+      # This is the exact ZIP uploaded by the next step.
       - name: Attest Windows release assets
         uses: actions/attest-build-provenance@v2
         with:
-          subject-path: 'release-assets/*'
+          subject-path: 'release-assets/*.zip'
 
       - name: Upload Windows assets to the existing Release
         uses: softprops/action-gh-release@v2
         with:
-          files: release-assets/*
+          files: release-assets/*.zip
           generate_release_notes: true
