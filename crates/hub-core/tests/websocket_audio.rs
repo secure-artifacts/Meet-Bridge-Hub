@@ -34,7 +34,7 @@ fn uplink(
     bytes
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn three_seconds_of_real_windows_bursts_preserve_every_sample() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
@@ -60,6 +60,10 @@ async fn three_seconds_of_real_windows_bursts_preserve_every_sample() {
     let drain = tokio::spawn(async move { while reader.next().await.is_some() {} });
     let producer = tokio::spawn(async move {
         let mut clock = tokio::time::interval(std::time::Duration::from_millis(30));
+        // A real-time source does not replay every timer deadline after the
+        // machine is descheduled. Catch-up bursts are stale audio and conflict
+        // with the Hub's deliberate 250 ms latency ceiling.
+        clock.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         for i in 1..=300 {
             // Six-frame prebuffer, followed by three-frame arrival bursts.
             if i == 7 {

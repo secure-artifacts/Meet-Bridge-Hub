@@ -71,7 +71,10 @@ jobs:
           rustc -vV
 
       - name: Test Windows workspace
-        run: cargo test --workspace
+        # Real-time WebSocket tests each run their own Tokio runtime. Running
+        # test binaries concurrently on a two-core hosted runner can starve the
+        # 10 ms mixer clock and create synthetic catch-up bursts.
+        run: cargo test --workspace -- --test-threads=1
 
       - name: Install Tauri CLI
         run: cargo install tauri-cli --locked --version '^2'

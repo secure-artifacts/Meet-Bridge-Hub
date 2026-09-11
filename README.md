@@ -1,8 +1,8 @@
 # Meet Bridge Hub
 
-## 0.1.3
+## 0.1.5
 
-- 修复跨 Profile N-1 路由、无上行接收端、Hub 麦克风显式接收端选择，以及断线与音频电平诊断。
+- 修复 Windows 发布测试的实时调度误差，同时保留跨 Profile N-1、250ms 延迟上限和逐样本完整性验证。
 
 Meet Bridge Hub is the desktop companion for the Meet Bridge browser extension. This repository contains two deliberately separate deliverables:
 
