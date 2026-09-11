@@ -1,11 +1,17 @@
 use crate::mixer::{MixEndpoint, NMinusOneMatrix, PCM_FRAME_SAMPLES};
 use std::collections::{HashMap, VecDeque};
+use std::time::{Duration, Instant};
 pub const PREBUFFER_FRAMES: usize = 6;
 pub const MAX_QUEUED_FRAMES: usize = 50;
+pub const MAX_INPUT_AGE: Duration = Duration::from_millis(250);
 type Frame = [f32; PCM_FRAME_SAMPLES];
+struct QueuedFrame {
+    samples: Frame,
+    enqueued_at: Instant,
+}
 #[derive(Default)]
 struct InputQueue {
-    frames: VecDeque<Frame>,
+    frames: VecDeque<QueuedFrame>,
     started: bool,
     last_sample: f32,
 }
@@ -27,6 +33,9 @@ impl ClockedMixer {
         self.matrix.remove(endpoint);
     }
     pub fn enqueue(&mut self, endpoint: MixEndpoint, samples: Frame) -> bool {
+        self.enqueue_at(endpoint, samples, Instant::now())
+    }
+    fn enqueue_at(&mut self, endpoint: MixEndpoint, samples: Frame, enqueued_at: Instant) -> bool {
         let Some(input) = self.inputs.get_mut(&endpoint) else {
             return false;
         };
@@ -34,19 +43,29 @@ impl ClockedMixer {
             input.frames.pop_front();
             self.dropped_frames += 1;
         }
-        input.frames.push_back(samples);
+        input.frames.push_back(QueuedFrame {
+            samples,
+            enqueued_at,
+        });
         true
     }
     // Exactly once per shared tick, before mixing any destinations.
     pub fn advance(&mut self) {
+        let now = Instant::now();
         for (endpoint, input) in &mut self.inputs {
+            while input.frames.front().is_some_and(|frame| {
+                now.saturating_duration_since(frame.enqueued_at) > MAX_INPUT_AGE
+            }) {
+                input.frames.pop_front();
+                self.dropped_frames += 1;
+            }
             if !input.started && input.frames.len() >= PREBUFFER_FRAMES {
                 input.started = true;
             }
             let frame = if input.started {
                 if let Some(frame) = input.frames.pop_front() {
-                    input.last_sample = frame[PCM_FRAME_SAMPLES - 1];
-                    frame
+                    input.last_sample = frame.samples[PCM_FRAME_SAMPLES - 1];
+                    frame.samples
                 } else {
                     self.underruns += 1;
                     input.started = false;
@@ -171,5 +190,22 @@ mod tests {
         mixer.register(source);
         mixer.advance();
         assert_eq!(mixer.mix_for(target), [0.0; PCM_FRAME_SAMPLES]);
+    }
+
+    #[test]
+    fn stale_input_is_discarded_before_fresh_prebuffer_is_rendered() {
+        let mut mixer = ClockedMixer::default();
+        let source = endpoint(ChannelId::CHANNEL_1);
+        let target = endpoint(ChannelId::CHANNEL_1);
+        mixer.register(source);
+        mixer.register(target);
+        let stale_at = Instant::now() - MAX_INPUT_AGE - Duration::from_millis(1);
+        mixer.enqueue_at(source, [0.9; PCM_FRAME_SAMPLES], stale_at);
+        for _ in 0..PREBUFFER_FRAMES {
+            mixer.enqueue(source, [0.25; PCM_FRAME_SAMPLES]);
+        }
+        mixer.advance();
+        assert_eq!(mixer.mix_for(target), [0.25; PCM_FRAME_SAMPLES]);
+        assert_eq!(mixer.dropped_frames, 1);
     }
 }

@@ -1,9 +1,9 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::io::{BufWriter, Write};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::sync::{Arc, OnceLock, mpsc as std_mpsc};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use base64::Engine;
 use futures_util::{SinkExt, StreamExt};
@@ -17,7 +17,7 @@ use shared_proto::{
     SessionGrant, SessionId,
 };
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::watch;
+use tokio::sync::Notify;
 use tokio::time::{MissedTickBehavior, interval, timeout};
 use tokio_tungstenite::{accept_async, tungstenite::Message};
 use tracing::{debug, warn};
@@ -94,14 +94,95 @@ struct Metrics {
 }
 
 struct AudioClient {
-    sender: watch::Sender<Option<Vec<u8>>>,
+    sender: Arc<DownlinkQueue>,
     exclude_same_profile: bool,
     include_hub_microphone: bool,
 }
 
 impl AudioClient {
-    fn send_latest(&self, frame: Vec<u8>) {
-        self.sender.send_replace(Some(frame));
+    fn send(&self, frame: Vec<u8>) -> usize {
+        self.sender.push(frame)
+    }
+}
+
+const MAX_DOWNLINK_FRAMES: usize = 32;
+const MAX_DOWNLINK_AGE: Duration = Duration::from_millis(250);
+
+struct QueuedDownlink {
+    frame: Vec<u8>,
+    enqueued_at: Instant,
+}
+
+#[derive(Default)]
+struct DownlinkState {
+    frames: VecDeque<QueuedDownlink>,
+    closed: bool,
+}
+
+#[derive(Default)]
+struct DownlinkQueue {
+    state: Mutex<DownlinkState>,
+    notify: Notify,
+}
+
+impl DownlinkQueue {
+    fn push(&self, frame: Vec<u8>) -> usize {
+        self.push_at(frame, Instant::now())
+    }
+
+    fn push_at(&self, frame: Vec<u8>, enqueued_at: Instant) -> usize {
+        let now = Instant::now();
+        let mut state = self.state.lock();
+        if state.closed {
+            return 0;
+        }
+        let mut dropped = 0;
+        while state.frames.front().is_some_and(|queued| {
+            now.saturating_duration_since(queued.enqueued_at) > MAX_DOWNLINK_AGE
+        }) {
+            state.frames.pop_front();
+            dropped += 1;
+        }
+        while state.frames.len() >= MAX_DOWNLINK_FRAMES {
+            state.frames.pop_front();
+            dropped += 1;
+        }
+        state
+            .frames
+            .push_back(QueuedDownlink { frame, enqueued_at });
+        drop(state);
+        self.notify.notify_one();
+        dropped
+    }
+
+    async fn recv(&self) -> Option<Vec<u8>> {
+        loop {
+            let notified = self.notify.notified();
+            {
+                let now = Instant::now();
+                let mut state = self.state.lock();
+                while state.frames.front().is_some_and(|queued| {
+                    now.saturating_duration_since(queued.enqueued_at) > MAX_DOWNLINK_AGE
+                }) {
+                    state.frames.pop_front();
+                }
+                if let Some(queued) = state.frames.pop_front() {
+                    return Some(queued.frame);
+                }
+                if state.closed {
+                    return None;
+                }
+            }
+            notified.await;
+        }
+    }
+
+    fn close(&self) {
+        let mut state = self.state.lock();
+        state.closed = true;
+        state.frames.clear();
+        drop(state);
+        self.notify.notify_waiters();
     }
 }
 
@@ -322,7 +403,9 @@ impl HubService {
         let session_secret_b64 = make_secret()?;
         for id in replaced {
             if let Some(old) = sessions.remove(&id) {
-                self.audio_clients.lock().remove(&id);
+                if let Some(client) = self.audio_clients.lock().remove(&id) {
+                    client.sender.close();
+                }
                 self.mixer.lock().remove(MixEndpoint {
                     endpoint_id: old.endpoint_id,
                     channel_id: old.channel_id,
@@ -367,7 +450,9 @@ impl HubService {
         let mut sessions = self.sessions.lock();
         let removed = sessions.remove(&session_id);
         if let Some(session) = removed {
-            self.audio_clients.lock().remove(&session_id);
+            if let Some(client) = self.audio_clients.lock().remove(&session_id) {
+                client.sender.close();
+            }
             self.mixer.lock().remove(MixEndpoint {
                 endpoint_id: session.endpoint_id,
                 channel_id: session.channel_id,
@@ -467,11 +552,13 @@ impl HubService {
     }
 
     fn mix_tick(&self, sequence: u64) {
-        let underrun = {
+        let (underrun, levels, backpressure) = {
             let sessions = self.sessions.lock();
             let clients = self.audio_clients.lock();
             let mut mixer = self.mixer.lock();
             let before = mixer.underruns;
+            let mut levels = Vec::new();
+            let mut backpressure = Vec::new();
             mixer.advance();
             for (id, client) in clients.iter() {
                 let Some(session) = sessions.get(id) else {
@@ -499,16 +586,39 @@ impl HubService {
                 }
                 let samples = mixer.mix_for_excluding(endpoint, &excluded);
                 if sequence % 100 == 0 {
-                    write_audio_level("audio_downlink_mix", *id, session, sequence, &samples);
+                    levels.push((*id, session.clone(), samples));
                 }
                 let frame = encode_downlink_frame(session, samples, sequence);
-                // Keep only the freshest unsent frame. When a browser resumes
-                // after a scheduling pause it continues at live time instead
-                // of playing stale audio or losing its authenticated session.
-                client.send_latest(frame);
+                // Preserve every frame while the receiver keeps pace. If it
+                // stalls, discard only frames older than the real-time budget.
+                let dropped = client.send(frame);
+                if dropped > 0 {
+                    backpressure.push((*id, session.clone(), dropped));
+                }
             }
-            mixer.underruns > before
+            (mixer.underruns > before, levels, backpressure)
         };
+        for (session_id, session, samples) in levels {
+            write_audio_level(
+                "audio_downlink_mix",
+                session_id,
+                &session,
+                sequence,
+                &samples,
+            );
+        }
+        for (session_id, session, dropped) in backpressure {
+            write_diagnostic_json(serde_json::json!({
+                "timestamp_ms": unix_millis(SystemTime::now()),
+                "event": "audio_output_backpressure",
+                "sessionId": session_id,
+                "profileId": session.profile_id,
+                "endpointId": session.endpoint_id,
+                "channelId": session.channel_id.0,
+                "sequence": sequence,
+                "droppedFrames": dropped,
+            }));
+        }
         if underrun {
             write_diagnostic_event("audio_input_underrun");
         }
@@ -534,7 +644,8 @@ impl HubService {
                 .map_err(ConnectionError::WebSocket)?;
             return Err(ConnectionError::RejectedAuthentication);
         };
-        let (sender, mut downlinks) = watch::channel(None);
+        let downlinks = Arc::new(DownlinkQueue::default());
+        let sender = downlinks.clone();
         {
             let sessions = self.sessions.lock();
             let mut clients = self.audio_clients.lock();
@@ -553,69 +664,79 @@ impl HubService {
         self.metrics.lock().authenticated_audio_connections += 1;
         write_diagnostic_event("audio_authenticated");
 
-        let result = async {
-        let mut previous_downlink_sequence: Option<u64> = None;
         socket
-            .send(Message::Text(serde_json::json!({
-                "type": "AUDIO_READY",
-                "exclude_same_profile": auth.exclude_same_profile,
-                "include_hub_microphone": auth.include_hub_microphone,
-            }).to_string().into()))
+            .send(Message::Text(
+                serde_json::json!({
+                    "type": "AUDIO_READY",
+                    "exclude_same_profile": auth.exclude_same_profile,
+                    "include_hub_microphone": auth.include_hub_microphone,
+                })
+                .to_string()
+                .into(),
+            ))
             .await
             .map_err(ConnectionError::WebSocket)?;
-
-        loop {
-            let message = tokio::select! {
-                message = socket.next() => {
-                    let Some(message) = message else { break };
-                    message
-                },
-                output = downlinks.changed() => {
-                    if output.is_err() { break; }
-                    let Some(output) = downlinks.borrow_and_update().clone() else { continue; };
-                    if !self.sessions.lock().contains_key(&session_id) { break; }
-                    if let Ok(header) = AudioFrameHeader::from_bytes(&output) {
-                        if let Some(previous) = previous_downlink_sequence {
-                            let expected = previous.wrapping_add(1);
-                            if header.sequence != expected {
-                                write_downlink_gap(session_id, &session, previous, header.sequence);
-                            }
-                        }
-                        previous_downlink_sequence = Some(header.sequence);
+        let (mut socket_writer, mut socket_reader) = socket.split();
+        let reader = async {
+            while let Some(message) = socket_reader.next().await {
+                let message = match message {
+                    Ok(message) => message,
+                    Err(error) => {
+                        debug!(%error, "audio websocket closed with an error");
+                        break;
                     }
-                    match timeout(Duration::from_secs(2), socket.send(Message::Binary(output.into()))).await {
-                        Ok(Ok(())) => {},
-                        _ => {
-                            self.metrics.lock().audio_slow_disconnects += 1;
-                            write_diagnostic_event("audio_output_send_failed");
-                            break;
-                        }
+                };
+                match message {
+                    Message::Binary(frame) => {
+                        self.process_audio_frame(session_id, &session, &frame);
                     }
-                    continue;
+                    Message::Close(_) => break,
+                    // tungstenite queues a matching Pong while reading. The
+                    // independent audio writer continuously flushes the sink.
+                    Message::Ping(_) | Message::Pong(_) => {}
+                    _ => self.reject_frame(),
                 }
-            };
-            let message = match message {
-                Ok(message) => message,
-                Err(error) => {
-                    debug!(%error, "audio websocket closed with an error");
+            }
+            Ok(())
+        };
+        let writer = async {
+            let mut previous_downlink_sequence: Option<u64> = None;
+            while let Some(output) = downlinks.recv().await {
+                if !self.sessions.lock().contains_key(&session_id) {
                     break;
                 }
-            };
-            match message {
-                Message::Binary(frame) => {
-                    self.process_audio_frame(session_id, &session, &frame);
+                if let Ok(header) = AudioFrameHeader::from_bytes(&output) {
+                    if let Some(previous) = previous_downlink_sequence {
+                        let expected = previous.wrapping_add(1);
+                        if header.sequence != expected {
+                            write_downlink_gap(session_id, &session, previous, header.sequence);
+                        }
+                    }
+                    previous_downlink_sequence = Some(header.sequence);
                 }
-                Message::Close(_) => break,
-                Message::Ping(payload) => {
-                    if socket.send(Message::Pong(payload)).await.is_err() {
+                match timeout(
+                    MAX_DOWNLINK_AGE,
+                    socket_writer.send(Message::Binary(output.into())),
+                )
+                .await
+                {
+                    Ok(Ok(())) => {}
+                    Ok(Err(error)) => return Err(ConnectionError::WebSocket(error)),
+                    Err(_) => {
+                        self.metrics.lock().audio_slow_disconnects += 1;
+                        write_diagnostic_event("audio_output_send_timeout");
                         break;
                     }
                 }
-                _ => self.reject_frame(),
             }
-        }
-        Ok(())
-        }.await;
+            Ok(())
+        };
+        tokio::pin!(reader);
+        tokio::pin!(writer);
+        let result = tokio::select! {
+            result = &mut reader => result,
+            result = &mut writer => result,
+        };
         {
             let mut metrics = self.metrics.lock();
             metrics.authenticated_audio_connections =
@@ -665,7 +786,7 @@ impl HubService {
                 self.reject_frame();
                 return;
             }
-            {
+            let overflowed = {
                 let sessions = self.sessions.lock();
                 if !sessions.contains_key(&session_id) {
                     return;
@@ -679,9 +800,10 @@ impl HubService {
                 if !mixer.enqueue(endpoint, samples) {
                     return;
                 }
-                if mixer.dropped_frames > before {
-                    write_diagnostic_event("audio_input_overflow");
-                }
+                mixer.dropped_frames > before
+            };
+            if overflowed {
+                write_diagnostic_event("audio_input_overflow");
             }
             let accepted_frames = {
                 let mut metrics = self.metrics.lock();
@@ -795,21 +917,43 @@ fn write_downlink_gap(
 }
 
 fn write_diagnostic_json(value: serde_json::Value) {
-    static LOG_LOCK: Mutex<()> = Mutex::new(());
-    let _guard = LOG_LOCK.lock();
-    let path = diagnostic_log_path();
-    let Some(parent) = path.parent() else {
-        return;
-    };
-    if fs::create_dir_all(parent).is_err() {
-        return;
-    }
-    let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) else {
-        return;
-    };
     let mut line = value.to_string();
     line.push('\n');
-    let _ = file.write_all(line.as_bytes());
+    let _ = diagnostic_log_sender().try_send(line);
+}
+
+fn diagnostic_log_sender() -> &'static std_mpsc::SyncSender<String> {
+    static SENDER: OnceLock<std_mpsc::SyncSender<String>> = OnceLock::new();
+    SENDER.get_or_init(|| {
+        let (sender, receiver) = std_mpsc::sync_channel::<String>(4096);
+        let path = diagnostic_log_path();
+        let _ = std::thread::Builder::new()
+            .name("meet-bridge-diagnostic-log".to_owned())
+            .spawn(move || {
+                let Some(parent) = path.parent() else {
+                    return;
+                };
+                if fs::create_dir_all(parent).is_err() {
+                    return;
+                }
+                let Ok(file) = OpenOptions::new().create(true).append(true).open(path) else {
+                    return;
+                };
+                let mut writer = BufWriter::new(file);
+                while let Ok(line) = receiver.recv() {
+                    if writer.write_all(line.as_bytes()).is_err() {
+                        return;
+                    }
+                    for pending in receiver.try_iter() {
+                        if writer.write_all(pending.as_bytes()).is_err() {
+                            return;
+                        }
+                    }
+                    let _ = writer.flush();
+                }
+            });
+        sender
+    })
 }
 
 fn unix_millis(value: SystemTime) -> u128 {
@@ -941,20 +1085,72 @@ mod downlink_tests {
     use super::*;
 
     #[tokio::test]
-    async fn stalled_receiver_keeps_the_latest_frame_without_disconnect() {
-        let (sender, mut receiver) = watch::channel(None);
-        let client = AudioClient {
-            sender,
-            exclude_same_profile: true,
-            include_hub_microphone: false,
-        };
-
-        for sequence in 0_u8..=40 {
-            client.send_latest(vec![sequence]);
+    async fn receiver_that_keeps_pace_gets_every_frame_in_order() {
+        let queue = DownlinkQueue::default();
+        for sequence in 0_u8..12 {
+            assert_eq!(queue.push(vec![sequence]), 0);
         }
+        for expected in 0_u8..12 {
+            assert_eq!(queue.recv().await, Some(vec![expected]));
+        }
+    }
 
-        receiver.changed().await.expect("sender remains connected");
-        assert_eq!(receiver.borrow_and_update().as_deref(), Some(&[40][..]));
-        assert!(!receiver.has_changed().expect("sender remains connected"));
+    #[tokio::test]
+    async fn stalled_receiver_discards_only_expired_audio_then_recovers() {
+        let queue = DownlinkQueue::default();
+        let stale = Instant::now() - MAX_DOWNLINK_AGE - Duration::from_millis(1);
+        assert_eq!(queue.push_at(vec![1], stale), 0);
+        assert_eq!(queue.push(vec![2]), 1);
+        assert_eq!(queue.push(vec![3]), 0);
+        assert_eq!(queue.recv().await, Some(vec![2]));
+        assert_eq!(queue.recv().await, Some(vec![3]));
+        assert_eq!(queue.push(vec![4]), 0);
+        assert_eq!(queue.recv().await, Some(vec![4]));
+    }
+
+    #[tokio::test]
+    async fn short_pause_preserves_fresh_audio() {
+        let queue = DownlinkQueue::default();
+        for sequence in 0_u8..20 {
+            assert_eq!(queue.push(vec![sequence]), 0);
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        for expected in 0_u8..20 {
+            assert_eq!(queue.recv().await, Some(vec![expected]));
+        }
+    }
+
+    #[tokio::test]
+    async fn one_stalled_profile_does_not_drop_a_healthy_profiles_frames() {
+        let stalled = DownlinkQueue::default();
+        let healthy = DownlinkQueue::default();
+        for sequence in 0_u8..100 {
+            let _ = stalled.push(vec![sequence]);
+            assert_eq!(healthy.push(vec![sequence]), 0);
+            assert_eq!(healthy.recv().await, Some(vec![sequence]));
+        }
+        assert_eq!(stalled.state.lock().frames.len(), MAX_DOWNLINK_FRAMES);
+        assert!(stalled.push(vec![100]) > 0);
+        assert_eq!(stalled.recv().await, Some(vec![69]));
+        assert_eq!(healthy.push(vec![100]), 0);
+        assert_eq!(healthy.recv().await, Some(vec![100]));
+    }
+
+    #[tokio::test]
+    async fn closing_queue_wakes_a_waiting_writer() {
+        let queue = Arc::new(DownlinkQueue::default());
+        let waiting = {
+            let queue = queue.clone();
+            tokio::spawn(async move { queue.recv().await })
+        };
+        tokio::task::yield_now().await;
+        queue.close();
+        assert_eq!(
+            timeout(Duration::from_millis(100), waiting)
+                .await
+                .expect("waiting writer should wake")
+                .expect("waiting task should finish"),
+            None
+        );
     }
 }

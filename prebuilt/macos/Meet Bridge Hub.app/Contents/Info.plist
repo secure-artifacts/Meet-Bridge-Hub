@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>English</string>
+	<key>CFBundleDisplayName</key>
+	<string>Meet Bridge Hub</string>
+	<key>CFBundleExecutable</key>
+	<string>meet-bridge-hub-ui</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.meetbridge.hub</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>Meet Bridge Hub</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>0.1.0-alpha.0</string>
+	<key>CFBundleVersion</key>
+	<string>0.1.0-alpha.0</string>
+	<key>CSResourcesFileMapped</key>
+	<true/>
+	<key>LSMinimumSystemVersion</key>
+	<string>10.13</string>
+	<key>LSRequiresCarbon</key>
+	<true/>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Meet Bridge Hub 仅在您点击“启动 Hub 麦克风”后使用物理麦克风，将音频保留在本机用于会议桥接。</string>
+</dict>
+</plist>
