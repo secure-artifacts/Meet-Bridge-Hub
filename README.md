@@ -15,7 +15,7 @@ Meet Bridge Hub is the desktop companion for the Meet Bridge browser extension. 
 | --- | --- |
 | `apps/tauri-app` | Tauri desktop shell and static frontend |
 | `crates/hub-core` | Hub, pairing, microphone, and mixer services |
-| `crates/native-broker` | Native Messaging broker used by Chrome integration |
+| `crates/native-broker` | Native Messaging broker used by Chrome and Edge integration |
 | `extensions/meet-bridge-n-minus-one` | Independently released browser extension |
 | `.github/workflows/release.yml` | Tagged desktop-release workflow with provenance attestations |
 
@@ -69,4 +69,6 @@ git push origin v0.1.0
 
 ## Important platform note
 
-The existing native-host installer is implemented only for macOS. The Windows desktop package is built without changing the tested mixer/service code, but browser-extension Native Messaging installation on Windows remains unavailable until a separately specified Windows installer design is implemented.
+On Windows, starting Meet Bridge Hub installs or repairs the current-user Native Messaging registration for both Google Chrome and Microsoft Edge. Both browsers use the same manifest and the fixed Meet Bridge N-1 extension ID.
+
+The Windows audio diagnostic log is stored at `%LOCALAPPDATA%\Meet Bridge Hub\Logs\hub-audio.ndjson`. Set `MEET_BRIDGE_AUDIO_LOG` before starting the Hub only when a custom diagnostic path is required.

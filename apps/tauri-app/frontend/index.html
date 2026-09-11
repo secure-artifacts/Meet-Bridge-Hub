@@ -62,7 +62,7 @@
 
       <section class="card">
         <div class="service-row">
-          <div class="service-copy"><strong>Chrome 扩展连接</strong><p id="native-host" class="hint">正在检查连接器…</p></div>
+          <div class="service-copy"><strong>Chrome / Edge 扩展连接</strong><p id="native-host" class="hint">正在检查连接器…</p></div>
           <button id="native-host-install" class="secondary">安装连接器</button>
         </div>
         <div class="mic-row">
@@ -91,11 +91,11 @@
           text('#audio-frames', status.accepted_audio_frames);
           text('#audio-rejected', status.rejected_audio_frames);
           text('#diagnostic-path', '日志：' + status.diagnostic_log_path);
-          text('#audio-timing', `音频欠载：${status.audio_queue_underruns}；队列溢出丢帧：${status.audio_queue_dropped_frames}；慢连接断开：${status.audio_slow_disconnects}`);
+          text('#audio-timing', `音频欠载：${status.audio_queue_underruns}；队列溢出丢帧：${status.audio_queue_dropped_frames}；下行发送失败断开：${status.audio_slow_disconnects}`);
           text('#microphone', status.microphone_active ? '物理麦克风：正在使用' : '物理麦克风：未启动');
           text('#microphone-toggle', status.microphone_active ? '停止麦克风' : '启动麦克风');
           const nativeHostReady = await invoke('native_host_registered');
-          text('#native-host', nativeHostReady ? '已就绪，仅允许本扩展连接' : '尚未安装；仅写入当前 Windows 用户。');
+          text('#native-host', nativeHostReady ? 'Chrome / Edge 已就绪，仅允许本扩展连接' : '连接器尚未就绪；仅写入当前 Windows 用户。');
           text('#native-host-install', nativeHostReady ? '重新安装' : '安装连接器');
           renderPairing(status);
         } catch (error) { text('#state', 'Hub 状态读取失败：' + String(error)); }
@@ -112,7 +112,7 @@
         pairing.replaceChildren();
         if (status.pending_pair_codes.length) {
           if (!status.pending_pair_codes.includes(lastCopiedPairingCode)) { lastCopiedPairingCode = ''; copyStatus.textContent = ''; }
-          pairing.append('将六码确认码输入对应 Chrome Profile 的扩展：');
+          pairing.append('将六码确认码输入对应浏览器 Profile 的扩展：');
           for (const code of status.pending_pair_codes) {
             const box = document.createElement('span'); box.className = 'pairing-code';
             const codeElement = document.createElement('code'); codeElement.textContent = code;
@@ -134,8 +134,8 @@
       });
       document.querySelector('#native-host-install').addEventListener('click', async () => {
         if (!invoke) return;
-        try { await invoke('install_native_host'); text('#state', 'Chrome 连接器已安装'); }
-        catch (error) { text('#state', 'Chrome 连接器未安装：' + String(error)); }
+        try { await invoke('install_native_host'); text('#state', 'Chrome / Edge 连接器已安装'); }
+        catch (error) { text('#state', 'Chrome / Edge 连接器未安装：' + String(error)); }
         await refresh();
       });
       refresh(); setInterval(refresh, 1000);

@@ -159,6 +159,10 @@ fn main() {
     tauri::Builder::default()
         .manage(hub)
         .setup(move |_| {
+            #[cfg(target_os = "windows")]
+            if let Err(error) = windows_native_host::install() {
+                tracing::warn!(%error, "unable to register Chrome and Edge native messaging host");
+            }
             tauri::async_runtime::spawn(async move {
                 if let Err(error) = runtime_hub.serve().await {
                     tracing::error!(%error, "hub audio service stopped");

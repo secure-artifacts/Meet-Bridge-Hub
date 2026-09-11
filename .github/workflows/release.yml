@@ -70,6 +70,9 @@ jobs:
           if ($env:PROCESSOR_ARCHITECTURE -ne 'AMD64') { throw 'Windows x64 runner is required.' }
           rustc -vV
 
+      - name: Test Windows workspace
+        run: cargo test --workspace
+
       - name: Install Tauri CLI
         run: cargo install tauri-cli --locked --version '^2'
 

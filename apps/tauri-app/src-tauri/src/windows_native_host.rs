@@ -4,9 +4,15 @@ use winreg::{RegKey, enums::HKEY_CURRENT_USER};
 
 pub const NATIVE_HOST_NAME: &str = "com.meetbridge.hub";
 pub const EXTENSION_ORIGIN: &str = "chrome-extension://ancoaojdjchmllenalcmmkgndahancgp/";
+const BROWSER_NATIVE_MESSAGING_ROOTS: &[&str] = &[
+    "Software\\Google\\Chrome\\NativeMessagingHosts",
+    "Software\\Microsoft\\Edge\\NativeMessagingHosts",
+];
 
-fn registry_path() -> String {
-    format!("Software\\Google\\Chrome\\NativeMessagingHosts\\{NATIVE_HOST_NAME}")
+fn registry_paths() -> impl Iterator<Item = String> {
+    BROWSER_NATIVE_MESSAGING_ROOTS
+        .iter()
+        .map(|root| format!("{root}\\{NATIVE_HOST_NAME}"))
 }
 
 fn manifest_path() -> Result<PathBuf, String> {
@@ -60,20 +66,27 @@ pub fn is_registered() -> Result<bool, String> {
         .and_then(serde_json::Value::as_array)
         .map(|origins| origins.len() == 1 && origins[0].as_str() == Some(EXTENSION_ORIGIN))
         .unwrap_or(false);
-    let chrome = RegKey::predef(HKEY_CURRENT_USER);
-    let Ok(key) = chrome.open_subkey(registry_path()) else {
+    let root = RegKey::predef(HKEY_CURRENT_USER);
+    let manifest_is_valid = manifest.get("name").and_then(serde_json::Value::as_str)
+        == Some(NATIVE_HOST_NAME)
+        && manifest.get("path").and_then(serde_json::Value::as_str) == expected_broker.to_str()
+        && manifest.get("type").and_then(serde_json::Value::as_str) == Some("stdio")
+        && allowed_origins;
+    if !manifest_is_valid {
         return Ok(false);
-    };
-    let Ok(registered_manifest): Result<String, _> = key.get_value("") else {
-        return Ok(false);
-    };
-    Ok(
-        manifest.get("name").and_then(serde_json::Value::as_str) == Some(NATIVE_HOST_NAME)
-            && manifest.get("path").and_then(serde_json::Value::as_str) == expected_broker.to_str()
-            && manifest.get("type").and_then(serde_json::Value::as_str) == Some("stdio")
-            && allowed_origins
-            && registered_manifest == manifest_path.to_string_lossy(),
-    )
+    }
+    for registry_path in registry_paths() {
+        let Ok(key) = root.open_subkey(registry_path) else {
+            return Ok(false);
+        };
+        let Ok(registered_manifest): Result<String, _> = key.get_value("") else {
+            return Ok(false);
+        };
+        if registered_manifest != manifest_path.to_string_lossy() {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 pub fn install() -> Result<(), String> {
@@ -83,20 +96,23 @@ pub fn install() -> Result<(), String> {
         .parent()
         .ok_or_else(|| "Unable to locate the Chrome Native Messaging directory.".to_string())?;
     std::fs::create_dir_all(host_dir).map_err(|error| error.to_string())?;
-    let temporary_path = manifest_path.with_extension(format!("{}.tmp", std::process::id()));
+    // This is deliberately an overwrite instead of a temporary-file rename. On Windows,
+    // std::fs::rename does not replace an existing destination, which prevented an upgraded
+    // Hub from repairing a manifest that still pointed at an older installation directory.
     std::fs::write(
-        &temporary_path,
+        &manifest_path,
         serde_json::to_vec_pretty(&manifest_for(&broker)).map_err(|error| error.to_string())?,
     )
     .map_err(|error| error.to_string())?;
-    std::fs::rename(&temporary_path, &manifest_path).map_err(|error| error.to_string())?;
 
-    let chrome = RegKey::predef(HKEY_CURRENT_USER);
-    let (key, _) = chrome
-        .create_subkey(registry_path())
-        .map_err(|error| error.to_string())?;
-    key.set_value("", &manifest_path.to_string_lossy().to_string())
-        .map_err(|error| error.to_string())?;
+    let root = RegKey::predef(HKEY_CURRENT_USER);
+    for registry_path in registry_paths() {
+        let (key, _) = root
+            .create_subkey(registry_path)
+            .map_err(|error| error.to_string())?;
+        key.set_value("", &manifest_path.to_string_lossy().to_string())
+            .map_err(|error| error.to_string())?;
+    }
     Ok(())
 }
 
@@ -107,11 +123,13 @@ pub fn uninstall() -> Result<bool, String> {
         std::fs::remove_file(&manifest_path).map_err(|error| error.to_string())?;
         removed = true;
     }
-    let chrome = RegKey::predef(HKEY_CURRENT_USER);
-    match chrome.delete_subkey_all(registry_path()) {
-        Ok(()) => removed = true,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => return Err(error.to_string()),
+    let root = RegKey::predef(HKEY_CURRENT_USER);
+    for registry_path in registry_paths() {
+        match root.delete_subkey_all(registry_path) {
+            Ok(()) => removed = true,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.to_string()),
+        }
     }
     Ok(removed)
 }
@@ -131,5 +149,22 @@ mod tests {
             manifest["allowed_origins"],
             serde_json::json!([EXTENSION_ORIGIN])
         );
+    }
+
+    #[test]
+    fn registers_chrome_and_edge_for_the_same_fixed_host() {
+        let paths = registry_paths().collect::<Vec<_>>();
+        assert_eq!(paths.len(), 2);
+        assert!(
+            paths
+                .iter()
+                .any(|path| path.starts_with("Software\\Google\\Chrome\\"))
+        );
+        assert!(
+            paths
+                .iter()
+                .any(|path| path.starts_with("Software\\Microsoft\\Edge\\"))
+        );
+        assert!(paths.iter().all(|path| path.ends_with(NATIVE_HOST_NAME)));
     }
 }

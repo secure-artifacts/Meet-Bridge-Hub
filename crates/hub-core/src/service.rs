@@ -17,7 +17,7 @@ use shared_proto::{
     SessionGrant, SessionId,
 };
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::mpsc;
+use tokio::sync::watch;
 use tokio::time::{MissedTickBehavior, interval, timeout};
 use tokio_tungstenite::{accept_async, tungstenite::Message};
 use tracing::{debug, warn};
@@ -94,9 +94,15 @@ struct Metrics {
 }
 
 struct AudioClient {
-    sender: mpsc::Sender<Vec<u8>>,
+    sender: watch::Sender<Option<Vec<u8>>>,
     exclude_same_profile: bool,
     include_hub_microphone: bool,
+}
+
+impl AudioClient {
+    fn send_latest(&self, frame: Vec<u8>) {
+        self.sender.send_replace(Some(frame));
+    }
 }
 
 #[derive(Clone)]
@@ -434,7 +440,10 @@ impl HubService {
 
     pub async fn serve_listener(self, listener: TcpListener) -> std::io::Result<()> {
         let mut clock = interval(Duration::from_millis(10));
-        clock.set_missed_tick_behavior(MissedTickBehavior::Burst);
+        // Audio is real-time data. Replaying every missed 10 ms tick after the
+        // process is descheduled floods client queues with stale audio and can
+        // disconnect every browser at once on Windows.
+        clock.set_missed_tick_behavior(MissedTickBehavior::Skip);
         let mut sequence = 0_u64;
         loop {
             let (stream, peer_addr) = tokio::select! {
@@ -458,7 +467,6 @@ impl HubService {
     }
 
     fn mix_tick(&self, sequence: u64) {
-        let mut slow = Vec::new();
         let underrun = {
             let sessions = self.sessions.lock();
             let clients = self.audio_clients.lock();
@@ -494,19 +502,15 @@ impl HubService {
                     write_audio_level("audio_downlink_mix", *id, session, sequence, &samples);
                 }
                 let frame = encode_downlink_frame(session, samples, sequence);
-                if client.sender.try_send(frame).is_err() {
-                    slow.push(*id);
-                }
+                // Keep only the freshest unsent frame. When a browser resumes
+                // after a scheduling pause it continues at live time instead
+                // of playing stale audio or losing its authenticated session.
+                client.send_latest(frame);
             }
             mixer.underruns > before
         };
         if underrun {
             write_diagnostic_event("audio_input_underrun");
-        }
-        for id in slow {
-            self.metrics.lock().audio_slow_disconnects += 1;
-            write_diagnostic_event("audio_output_backpressure");
-            self.revoke_session(id);
         }
     }
 
@@ -530,7 +534,7 @@ impl HubService {
                 .map_err(ConnectionError::WebSocket)?;
             return Err(ConnectionError::RejectedAuthentication);
         };
-        let (sender, mut downlinks) = mpsc::channel(32);
+        let (sender, mut downlinks) = watch::channel(None);
         {
             let sessions = self.sessions.lock();
             let mut clients = self.audio_clients.lock();
@@ -550,6 +554,7 @@ impl HubService {
         write_diagnostic_event("audio_authenticated");
 
         let result = async {
+        let mut previous_downlink_sequence: Option<u64> = None;
         socket
             .send(Message::Text(serde_json::json!({
                 "type": "AUDIO_READY",
@@ -565,12 +570,26 @@ impl HubService {
                     let Some(message) = message else { break };
                     message
                 },
-                output = downlinks.recv() => {
-                    let Some(output) = output else { break };
+                output = downlinks.changed() => {
+                    if output.is_err() { break; }
+                    let Some(output) = downlinks.borrow_and_update().clone() else { continue; };
                     if !self.sessions.lock().contains_key(&session_id) { break; }
+                    if let Ok(header) = AudioFrameHeader::from_bytes(&output) {
+                        if let Some(previous) = previous_downlink_sequence {
+                            let expected = previous.wrapping_add(1);
+                            if header.sequence != expected {
+                                write_downlink_gap(session_id, &session, previous, header.sequence);
+                            }
+                        }
+                        previous_downlink_sequence = Some(header.sequence);
+                    }
                     match timeout(Duration::from_secs(2), socket.send(Message::Binary(output.into()))).await {
                         Ok(Ok(())) => {},
-                        _ => { write_diagnostic_event("audio_output_send_failed"); break; }
+                        _ => {
+                            self.metrics.lock().audio_slow_disconnects += 1;
+                            write_diagnostic_event("audio_output_send_failed");
+                            break;
+                        }
                     }
                     continue;
                 }
@@ -705,10 +724,31 @@ fn diagnostic_log_path() -> std::path::PathBuf {
     if let Some(path) = std::env::var_os("MEET_BRIDGE_AUDIO_LOG") {
         return std::path::PathBuf::from(path);
     }
-    std::env::var_os("HOME")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(std::env::temp_dir)
-        .join("Library/Logs/Meet Bridge Hub/hub-audio.ndjson")
+    #[cfg(windows)]
+    if let Some(local_app_data) = std::env::var_os("LOCALAPPDATA") {
+        return std::path::PathBuf::from(local_app_data)
+            .join("Meet Bridge Hub")
+            .join("Logs")
+            .join("hub-audio.ndjson");
+    }
+    #[cfg(target_os = "macos")]
+    if let Some(home) = std::env::var_os("HOME") {
+        return std::path::PathBuf::from(home)
+            .join("Library")
+            .join("Logs")
+            .join("Meet Bridge Hub")
+            .join("hub-audio.ndjson");
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    if let Some(state_home) = std::env::var_os("XDG_STATE_HOME") {
+        return std::path::PathBuf::from(state_home)
+            .join("meet-bridge-hub")
+            .join("hub-audio.ndjson");
+    }
+    std::env::temp_dir()
+        .join("Meet Bridge Hub")
+        .join("Logs")
+        .join("hub-audio.ndjson")
 }
 
 fn write_diagnostic_event(event: &str) {
@@ -732,6 +772,25 @@ fn write_audio_level(
         "sessionId": session_id, "profileId": session.profile_id, "endpointId": session.endpoint_id,
         "channelId": session.channel_id.0, "sequence": sequence, "frames": samples.len(),
         "sampleRate": 48000, "rms": (energy / samples.len() as f64).sqrt(), "peak": peak,
+    }));
+}
+
+fn write_downlink_gap(
+    session_id: SessionId,
+    session: &SessionRecord,
+    previous_sequence: u64,
+    sequence: u64,
+) {
+    write_diagnostic_json(serde_json::json!({
+        "timestamp_ms": unix_millis(SystemTime::now()),
+        "event": "audio_output_coalesced",
+        "sessionId": session_id,
+        "profileId": session.profile_id,
+        "endpointId": session.endpoint_id,
+        "channelId": session.channel_id.0,
+        "previousSequence": previous_sequence,
+        "sequence": sequence,
+        "skippedFrames": sequence.wrapping_sub(previous_sequence).saturating_sub(1),
     }));
 }
 
@@ -875,4 +934,27 @@ enum ConnectionError {
     AuthenticationPayload(serde_json::Error),
     #[error("audio authentication rejected")]
     RejectedAuthentication,
+}
+
+#[cfg(test)]
+mod downlink_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn stalled_receiver_keeps_the_latest_frame_without_disconnect() {
+        let (sender, mut receiver) = watch::channel(None);
+        let client = AudioClient {
+            sender,
+            exclude_same_profile: true,
+            include_hub_microphone: false,
+        };
+
+        for sequence in 0_u8..=40 {
+            client.send_latest(vec![sequence]);
+        }
+
+        receiver.changed().await.expect("sender remains connected");
+        assert_eq!(receiver.borrow_and_update().as_deref(), Some(&[40][..]));
+        assert!(!receiver.has_changed().expect("sender remains connected"));
+    }
 }
