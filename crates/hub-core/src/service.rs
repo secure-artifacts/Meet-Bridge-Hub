@@ -31,6 +31,8 @@ use crate::pairing::PairingRegistry;
 const MAX_AUDIO_PAYLOAD_BYTES: usize = 1920;
 const PAIRING_TTL: Duration = Duration::from_secs(120);
 const SESSION_TTL: Duration = Duration::from_secs(30 * 60);
+const MIX_FRAME_DURATION: Duration = Duration::from_millis(10);
+const MAX_MIX_CATCH_UP_TICKS: u64 = 3;
 
 #[derive(Debug, Clone)]
 pub struct HubConfig {
@@ -524,18 +526,36 @@ impl HubService {
     }
 
     pub async fn serve_listener(self, listener: TcpListener) -> std::io::Result<()> {
-        let mut clock = interval(Duration::from_millis(10));
-        // Audio is real-time data. Replaying every missed 10 ms tick after the
-        // process is descheduled floods client queues with stale audio and can
-        // disconnect every browser at once on Windows.
+        let mut clock = interval(MIX_FRAME_DURATION);
+        // Windows commonly wakes a nominal 10 ms timer every 15.6 ms. The
+        // monotonic deadline below restores the missing one or two frames while
+        // this interval merely provides wakeups. Long stalls are not replayed.
         clock.set_missed_tick_behavior(MissedTickBehavior::Skip);
+        let mut next_mix_deadline = Instant::now();
         let mut sequence = 0_u64;
         loop {
             let (stream, peer_addr) = tokio::select! {
                 accepted = listener.accept() => accepted?,
                 _ = clock.tick() => {
-                    self.mix_tick(sequence);
-                    sequence = sequence.wrapping_add(1);
+                    let now = Instant::now();
+                    let due_ticks = due_mix_ticks(now, next_mix_deadline);
+                    if due_ticks == 0 {
+                        continue;
+                    }
+                    if due_ticks > MAX_MIX_CATCH_UP_TICKS {
+                        // Preserve real-time latency after a genuine process
+                        // stall. Sequence gaps make the skipped time visible.
+                        sequence = sequence.wrapping_add(due_ticks - 1);
+                        self.mix_tick(sequence);
+                        sequence = sequence.wrapping_add(1);
+                        next_mix_deadline = now + MIX_FRAME_DURATION;
+                    } else {
+                        for _ in 0..due_ticks {
+                            self.mix_tick(sequence);
+                            sequence = sequence.wrapping_add(1);
+                        }
+                        next_mix_deadline += MIX_FRAME_DURATION * due_ticks as u32;
+                    }
                     continue;
                 }
             };
@@ -842,6 +862,14 @@ impl HubService {
     }
 }
 
+fn due_mix_ticks(now: Instant, next_deadline: Instant) -> u64 {
+    if now < next_deadline {
+        return 0;
+    }
+    let overdue = now.saturating_duration_since(next_deadline).as_nanos();
+    1_u64.saturating_add(u64::try_from(overdue / MIX_FRAME_DURATION.as_nanos()).unwrap_or(u64::MAX))
+}
+
 fn diagnostic_log_path() -> std::path::PathBuf {
     if let Some(path) = std::env::var_os("MEET_BRIDGE_AUDIO_LOG") {
         return std::path::PathBuf::from(path);
@@ -1083,6 +1111,26 @@ enum ConnectionError {
 #[cfg(test)]
 mod downlink_tests {
     use super::*;
+
+    #[test]
+    fn coarse_windows_wakeups_restore_100_hz_without_unbounded_replay() {
+        let start = Instant::now();
+        let mut next = start;
+        let mut rendered = 0_u64;
+        for wake_ms in [0_u64, 16, 31, 47, 62, 78, 94] {
+            let now = start + Duration::from_millis(wake_ms);
+            let due = due_mix_ticks(now, next);
+            assert!(due <= MAX_MIX_CATCH_UP_TICKS);
+            rendered += due;
+            next += MIX_FRAME_DURATION * due as u32;
+        }
+        assert_eq!(rendered, 10, "94 ms must render the deadlines at 0..90 ms");
+
+        assert!(
+            due_mix_ticks(start + Duration::from_secs(1), next) > MAX_MIX_CATCH_UP_TICKS,
+            "a genuine stall must take the skip path instead of replaying one second"
+        );
+    }
 
     #[tokio::test]
     async fn receiver_that_keeps_pace_gets_every_frame_in_order() {

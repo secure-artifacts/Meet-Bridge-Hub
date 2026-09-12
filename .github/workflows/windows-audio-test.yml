@@ -1,0 +1,24 @@
+name: Windows audio regression
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Windows x64 audio tests
+    runs-on: windows-2022
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify Windows x64 runner
+        shell: pwsh
+        run: |
+          if ($env:PROCESSOR_ARCHITECTURE -ne 'AMD64') { throw 'Windows x64 runner is required.' }
+          rustc -vV
+
+      - name: Test Windows workspace
+        run: cargo test --workspace -- --test-threads=1

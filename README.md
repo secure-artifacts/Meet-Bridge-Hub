@@ -2,7 +2,7 @@
 
 ## 0.1.5
 
-- 修复 Windows 发布测试的实时调度误差，同时保留跨 Profile N-1、250ms 延迟上限和逐样本完整性验证。
+- 修复 Windows 15.6ms 定时粒度造成的混音时钟降速，同时保留跨 Profile N-1、250ms 延迟上限和逐样本完整性验证。
 
 Meet Bridge Hub is the desktop companion for the Meet Bridge browser extension. This repository contains two deliberately separate deliverables:
 
