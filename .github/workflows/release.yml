@@ -15,6 +15,8 @@ permissions:
 jobs:
   macos:
     name: macOS package, attest, and release
+    # Do not spend macOS runner time until the Windows audio test/build has passed.
+    needs: windows
     # macos-14 is GitHub's Apple Silicon (ARM64) standard runner.
     runs-on: macos-14
     steps:
@@ -57,7 +59,6 @@ jobs:
 
   windows:
     name: Windows packages, attest, and release
-    needs: macos
     # Pin the supported x64 Windows image instead of inheriting image changes.
     runs-on: windows-2022
     steps:
